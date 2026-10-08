@@ -744,6 +744,29 @@
     return [...new Set(spread)];
   }
 
+  // Our own listRepos count, aligned to the users series. A run that finishes early in a UTC day
+  // (the 02:37 cron) measures the end of the previous day, the same instant `users` describes.
+  function ownCountSeries(dates, ownCount) {
+    const out = dates.map(() => null);
+    if (!ownCount || !Array.isArray(ownCount.rows)) return out;
+    const idx = new Map(dates.map((d, i) => [d, i]));
+    for (const r of ownCount.rows) {
+      const t = Date.parse(r.finished_at);
+      if (!r.complete || !Number.isFinite(t) || !Number.isSafeInteger(r.active)) continue;
+      const i = idx.get(new Date(t - 12 * 3600e3).toISOString().slice(0, 10));
+      if (i !== undefined) out[i] = r.active;
+    }
+    return out;
+  }
+
+  function latestOwnCount(ownCount) {
+    const rows = ownCount && Array.isArray(ownCount.rows) ? ownCount.rows.filter((r) => r.complete) : [];
+    if (!rows.length) return null;
+    const r = rows[rows.length - 1];
+    const net = ownCount.net && ownCount.net.length ? ownCount.net[ownCount.net.length - 1] : null;
+    return { ...r, inactive: r.repos - r.active, net: net && net.date === r.date ? net.net_active : null };
+  }
+
   function niceLogTick(value) {
     if (!(value > 0)) return false;
     const mantissa = value / 10 ** Math.floor(Math.log10(value) + 1e-9);
@@ -760,7 +783,7 @@
     serializeHashState, csvCell, buildCSV, buildChartCSV, resetChartZoom, computePrerenderValues,
     computeTickerItems, buildTickerHTML, buildMilestoneRows, buildMilestoneRowsHTML, computeWaveStats, formatChange,
     parseLiveFeed, acceptLiveReading, estimateLiveTotal, buildLiveUrl, syncFaqJsonLd, niceLogTick, trendClass,
-    formatAxisCompact, pickDateTicks, formatDateTick, logTicks, linearTicks
+    formatAxisCompact, pickDateTicks, formatDateTick, logTicks, linearTicks, ownCountSeries, latestOwnCount
   };
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -1037,6 +1060,15 @@
     const usersComp = $('#kpi-users-comp');
     setText(usersComp, netNow == null ? '—' : `${formatSigned(netNow)} in range · ${formatSigned(netNow / days)}/day avg`);
     if (usersComp) usersComp.title = `Change in total users, ${rangeTxt}`;
+    const own = latestOwnCount(app.data && app.data.own_count);
+    const ownEl = $('#kpi-users-own');
+    if (ownEl) {
+      ownEl.hidden = !own;
+      if (own) {
+        setText(ownEl, `OWN COUNT ${formatCompact(own.active)}\u00a0active · ${formatCompact(own.inactive)}\u00a0inactive${own.net == null ? '' : ` · net\u00a0${formatSigned(own.net)}/day`}`);
+        ownEl.title = `Our own count of every account on Bluesky-operated servers (${formatUtcStamp(own.finished_at)}): ${formatInteger(own.active)} active, ${formatInteger(own.deactivated)} deactivated, ${formatInteger(own.takendown)} taken down, ${formatInteger(own.repos - own.active - own.deactivated - own.takendown)} other. Unlike Jaz's counter, it drops accounts that leave, so day-to-day change is net growth.`;
+      }
+    }
     const netPrior = pr && s.users[pb] != null && s.users[pa] != null && pa < pb ? s.users[pb] - s.users[pa] : null;
     priorLine($('#kpi-users-prior'), `PRIOR ${formatSigned(netPrior)}`, pctChange(netPrior, netNow), '%', `Prior period ${priorTxt}: ${formatSigned(netPrior, false)} new accounts`);
     setSpark('spark-users', slice(s.users));
@@ -1339,6 +1371,12 @@
         segment: { borderDash: (ctx) => (est[ctx.p0DataIndex] || est[ctx.p1DataIndex] ? [4, 3] : undefined) },
         order: 2
       })];
+      const own = slice(s.ownActive || []);
+      if (own.some((v) => v != null)) {
+        sets.push(lineDataset('Active accounts (own count)', own, app.colors.gain, {
+          metaKey: 'ownActive', role: 'raw', spanGaps: true, pointRadius: 3, pointBackgroundColor: app.colors.gain, order: 1
+        }));
+      }
       if (app.view.prior) {
         sets.push(lineDataset('Prior period · Total users', priorSlice(s.users), app.colors.prior, {
           borderWidth: 1.5, borderDash: [5, 4], metaKey: 'users', role: 'prior', order: 1, pointHoverRadius: 3
@@ -1675,6 +1713,7 @@
     }
     if (chartKey === 'tot') {
       rows.push({ color: app.colors.users, line: true, label: 'Total users', value: formatInteger(s.users[gi]), sub: s.new_users[gi] == null ? '' : `Δ ${formatSigned(s.new_users[gi])}` });
+      if (s.ownActive && s.ownActive[gi] != null) rows.push({ color: app.colors.gain, line: true, label: 'Active (own count)', value: formatInteger(s.ownActive[gi]) });
       if (app.view.prior) {
         const pj = gi - app.view.prior.span;
         rows.push({ color: app.colors.prior, dash: true, label: `Prior · ${pj >= 0 ? formatDay(s.dates[pj]) : '—'}`, value: pj >= 0 ? formatInteger(s.users[pj]) : '—' });
@@ -2025,6 +2064,7 @@
       items.push({ text: 'hatched = estimated' });
     } else if (key === 'tot') {
       items.push({ color: c.users, text: 'Total users' }, { text: 'dashed = estimated' });
+      if (app.s.ownActive && app.s.ownActive.some((v) => v != null)) items.push({ color: c.gain, text: 'Active accounts (own count)' });
     } else {
       if (key === 'dau') series(['dau', 'posters']);
       if (key === 'act') series(['likers', 'posters', 'followers', 'blockers'].filter((k) => app.act[k]));
@@ -2420,6 +2460,7 @@
       if (!data || !Array.isArray(data.days) || data.days.length < 2) throw new Error('data/bluesky-data.js failed to load or is empty.');
       app.data = data;
       app.s = buildSeries(data.days);
+      app.s.ownActive = ownCountSeries(app.s.dates, data.own_count);
       app.pre = computePrerenderValues(data);
       app.state = parseHashState(root.location.hash);
       readColors();

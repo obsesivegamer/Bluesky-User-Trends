@@ -55,11 +55,14 @@ read it directly. That is why the archive is built server-side and committed.
 | `lib/users.js` | Turns timestamped user-count samples into the end-of-day users series. |
 | `lib/build.js` | Assembles rows, merges with the existing archive, serialises the JS and CSV files. |
 | `updateData.js` | The updater the Action runs. |
+| `lib/accounts.js` | Pure helpers for the own account count: tally statuses, choose hosts, merge runs, net change. |
+| `scripts/count-accounts.js` | Daily `listRepos` count of every account on Bluesky-operated hosts → `data/accounts-daily.json`. |
 | `scripts/backfill-users.js` | One-time, re-runnable builder of `data/users-samples.json` from all historical sources (cache in `.cache/`, gitignored). |
 | `scripts/sample-plc-rates.js` | Samples Bluesky-hosted DID creation rates from plc.directory for 2024-07 → 2024-11. |
 | `scripts/verify-dashboard.py` | Playwright end-to-end harness (see "Verification"). |
 | `data/bluesky-data.js` | The archive the page loads (generated, one row per line). |
 | `data/bluesky-daily.csv` | The same rows as CSV; the downloadable dataset. |
+| `data/accounts-daily.json` | Own account count, one row per UTC day (active, deactivated, taken down, …). |
 | `data/users-samples.json` | Committed provenance: the user-count readings the series is built from. |
 | `data/sources/plc-rate-samples.json` | Committed PLC creation-rate samples used to shape 2024 gaps. |
 | `data/README.md` | Sources, credits, changes made and license notices for the data. |
@@ -89,6 +92,7 @@ window.BLUESKY_DATA = {"schema":1, ..., "days":[
 | `live_source` | Where the browser may read a fresher user count: the `hourlybskyusers.bsky.social` bot's author feed and the regex for its post text. |
 | `activity_start` | `2023-03-01`, the first jazco daily row |
 | `collection_start` | `2023-05-01`; jazco's activity counts before this are reconstructed and undercounted |
+| `own_count` | `null`, or our own listRepos count: `{source, rows:[{date, finished_at, complete, repos, active, deactivated, takendown, suspended, deleted, other}], net:[{date, net_active}]}` |
 | `days` | Ascending, one row per UTC calendar day, contiguous, from `2022-11-17` to `last_complete_day` |
 
 Every row has every key:
@@ -199,6 +203,13 @@ node lib/prerender.js --data other.js --index /tmp/index.html --sitemap /tmp/sit
 
 ## Schedule and failure handling
 
+- `count-accounts.yml` runs at 02:37 UTC: `scripts/count-accounts.js` lists every account on each
+  Bluesky-operated host (hosts from the relay's `listHosts`, plus the previous complete run's host list),
+  one request in flight per host, backing off when `RateLimit-Remaining` runs low. It appends a row to
+  `data/accounts-daily.json`; a run where any host failed is saved with `complete: false`, kept out of net
+  growth, and fails the job. It shares the `update-data` concurrency group, and the 03:17 update publishes
+  the row as `own_count` in `data/bluesky-data.js` (`{source, rows, net}`; `net` is the change between
+  consecutive complete runs scaled to 24h).
 - The Action runs at 03:17 and 15:17 UTC. jazco's previous UTC day is about 99.9% final by 02:30 UTC; the
   second run adds user-count samples and picks up late revisions. GitHub may start scheduled runs late.
 - The checkout is the branch head (`ref: ${{ github.ref }}`), not the triggering commit, so a run that

@@ -46,6 +46,15 @@ the data twice a day and commits it.
   the count at the **end** of that UTC day: from July 2024 the count at 00:00 UTC the next day, read or
   interpolated from timestamped readings; before that, Wikimedia Commons once-a-day readings, which have
   no documented time of day and are treated as end of day.
+- **Active accounts (own count)**: our own daily count of every account on the same Bluesky-operated
+  hosts (`scripts/count-accounts.js`, run by `.github/workflows/count-accounts.yml` at 02:37 UTC). It
+  pages through `com.atproto.sync.listRepos` on every host (about 48k requests over ~90 hosts, well under
+  each host's 3,000-per-5-minutes limit) and counts accounts by status. Deactivated, taken-down and deleted
+  accounts are left out, so it runs well below the headline total (2026-10-08: 41.72M active vs 46.91M —
+  3.24M taken down, mostly spam; 0.47M deactivated; ~1.5M deleted and no longer listed), and its day-to-day change is
+  **net** growth. It does not depend on Jaz. History starts on 2026-10-08; rows live in
+  `data/accounts-daily.json`. The headline stays on Jaz's count because it matches Bluesky's announced
+  figures.
 - **User velocity**: new accounts per UTC day as counted by Jaz, `users[d] − users[d−1]`, shown with a
   7-day average. Because deletions are never subtracted, it measures sign-ups rather than net growth.
   Growth % is `new_users / users[d−1]`. "Velocity growth" is the change in the 7-day average velocity,

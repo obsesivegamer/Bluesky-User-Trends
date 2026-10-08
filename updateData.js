@@ -13,6 +13,7 @@ const path = require('path');
 const users = require('./lib/users.js');
 const jazco = require('./lib/jazco.js');
 const build = require('./lib/build.js');
+const accounts = require('./lib/accounts.js');
 
 const ROOT = __dirname;
 const UA = 'Bluesky-User-Trends (+https://github.com/obsesivegamer/Bluesky-User-Trends)';
@@ -135,6 +136,7 @@ async function main({
     csv: path.join(dataDir, 'bluesky-daily.csv'),
     samples: path.join(dataDir, 'users-samples.json'),
     plc: path.join(dataDir, 'sources', 'plc-rate-samples.json'),
+    accounts: path.join(dataDir, 'accounts-daily.json'),
   };
 
   let stats;
@@ -182,7 +184,8 @@ async function main({
   const series = users.buildUsersSeries(samples, { endDate: lastCompleteDay, plcSamples });
   const activity = build.mergeActivity(stats.rows, archive?.days || []);
   const days = build.assembleDays({ users: series, activity, lastCompleteDay });
-  const data = build.buildDataset({ generatedAt: new Date(nowMs).toISOString(), snapshot, days });
+  const ownCountRows = fs.existsSync(files.accounts) ? accounts.parse(fs.readFileSync(files.accounts, 'utf8')) : null;
+  const data = build.buildDataset({ generatedAt: new Date(nowMs).toISOString(), snapshot, days, ownCountRows });
   build.validateDataset(data);
 
   const outputs = [
