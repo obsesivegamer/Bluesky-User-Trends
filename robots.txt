@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://obsesivegamer.github.io/Bluesky-User-Trends/sitemap.xml

@@ -1,0 +1,19 @@
+{
+  "name": "bluesky-user-trends",
+  "private": true,
+  "description": "Bluesky user stats terminal: user velocity, daily active users and posters.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/obsesivegamer/Bluesky-User-Trends.git"
+  },
+  "homepage": "https://obsesivegamer.github.io/Bluesky-User-Trends/",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "update": "node updateData.js",
+    "backfill": "node scripts/backfill-users.js",
+    "prerender": "node lib/prerender.js",
+    "serve": "python3 -m http.server 8000"
+  }
+}

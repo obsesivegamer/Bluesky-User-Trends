@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bluesky User Stats: Daily Active Users, Posters &amp; Growth // Network Pulse</title>
+    <meta name="description" content="Bluesky user stats updated twice a day: total users, user velocity (new accounts per day), daily active users and daily posters, with history back to 2022. Terminal-style charts, CSV downloads.">
+    <link rel="canonical" href="https://obsesivegamer.github.io/Bluesky-User-Trends/">
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+    <meta name="theme-color" content="#080A0E">
+    <meta name="color-scheme" content="dark">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://obsesivegamer.github.io/Bluesky-User-Trends/">
+    <meta property="og:title" content="Bluesky User Stats: Daily Active Users, Posters &amp; Growth">
+    <meta property="og:description" content="A Bloomberg-style terminal for the Bluesky network: total users, new accounts per day, daily active users and posters, updated twice a day.">
+    <meta property="og:site_name" content="Bluesky Network Pulse">
+    <meta property="og:image" content="https://obsesivegamer.github.io/Bluesky-User-Trends/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Bluesky Network Pulse terminal: total users, user velocity, daily active users and posters">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://obsesivegamer.github.io/Bluesky-User-Trends/">
+    <meta name="twitter:title" content="Bluesky User Stats: Daily Active Users, Posters &amp; Growth">
+    <meta name="twitter:description" content="A Bloomberg-style terminal for the Bluesky network: total users, new accounts per day, daily active users and posters, updated twice a day.">
+    <meta name="twitter:image" content="https://obsesivegamer.github.io/Bluesky-User-Trends/og-image.png">
+
+    <script type="application/ld+json" id="jsonld">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "@id": "https://obsesivegamer.github.io/Bluesky-User-Trends/#app",
+            "name": "Bluesky Network Pulse",
+            "alternateName": "Bluesky User Trends",
+            "url": "https://obsesivegamer.github.io/Bluesky-User-Trends/",
+            "description": "Terminal-style dashboard for Bluesky: total users, user velocity (new accounts per day), daily active users and daily posters, updated twice a day from public data.",
+            "applicationCategory": "ReferenceApplication",
+            "operatingSystem": "Any",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "about": {
+              "@type": "Thing",
+              "name": "Bluesky",
+              "sameAs": "https://bsky.app/"
+            },
+            "dateModified": "2026-10-08T17:24:17.265Z"
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://obsesivegamer.github.io/Bluesky-User-Trends/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How many users does Bluesky have?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "As of 2026-10-08 17:24 UTC, Bluesky has 46,908,512 accounts on Bluesky-operated PDS hosts, according to Jaz’s counter. The counter adds each account that is active when it first lists it and never subtracts later deletions or deactivations, so it is closer to cumulative sign-ups on Bluesky’s own servers than to active accounts. Self-hosted and third-party PDS accounts are not included. It matches Bluesky’s official year-end figures: 25.94M users on Jan 1, 2025 and 41.41M on Dec 31, 2025."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How many daily active users does Bluesky have?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "At least 988.9K accounts were active on Bluesky on Oct 7, 2026: that many distinct accounts created a like, post, follow or block that UTC day. This is a lower bound, because Jaz’s index counts likes, posts, follows and blocks only, so people who only read or repost are not counted. Similarweb estimated about 3 million mobile daily active users in July 2026 (TechCrunch, Aug 11, 2026). The record is 3.12M on Nov 18, 2024."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How many people post on Bluesky each day?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "576.8K accounts published at least one post (including replies and quotes) on Oct 7, 2026. That is 58.3% of daily active accounts. The record is 1.48M posters on Nov 19, 2024."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How fast is Bluesky growing?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Over the last 7 days Bluesky added an average of +16.0K/day new accounts (user velocity, as counted by Jaz). The latest day added +16.0K. The largest single day in this data is +995.7K on Nov 14, 2024 (est.); “(est.)” means that day’s user counts are interpolated, so its exact size and date are uncertain."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where does this Bluesky data come from?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Daily activity and the current user count come from Jaz’s Bluesky index (bsky.jazco.dev/stats). User history before July 2024 comes from the Wikimedia Commons “Bluesky Registered Users” series; later history comes from hourly posts by @hourlybskyusers.bsky.social, Wayback Machine captures of Jaz’s counter, and the Krekeny and elaval archives. A GitHub Action refreshes the data twice a day."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Why are some days missing or marked as estimated?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Jaz’s indexer had collection outages, for example Aug 31 – Sep 6, 2024 and Apr 13–14, 2026. Those days are shown as gaps and left out of averages, peaks and comparisons. User counts for days without a nearby observation are interpolated and marked as estimated: hatched bars, dashed lines and a ~ in the table."
+                }
+              }
+            ]
+          },
+          {
+            "@type": "Dataset",
+            "@id": "https://obsesivegamer.github.io/Bluesky-User-Trends/#dataset",
+            "name": "Bluesky daily users, user velocity, daily active users and posters",
+            "description": "Daily Bluesky time series from 2022-11-17 to 2026-10-07: accounts counted on Bluesky-operated PDS hosts at the end of each UTC day (accounts deleted after they were first counted are not subtracted), new accounts per day (user velocity), daily active accounts (lower bound: distinct accounts that liked, posted, followed or blocked) and daily posters, plus daily post, like, follow and block counts, with per-day estimate and data-quality flags.",
+            "url": "https://obsesivegamer.github.io/Bluesky-User-Trends/",
+            "keywords": [
+              "Bluesky",
+              "Bluesky users",
+              "Bluesky daily active users",
+              "Bluesky user growth",
+              "AT Protocol",
+              "social media statistics"
+            ],
+            "creator": {
+              "@type": "Person",
+              "name": "obsesivegamer",
+              "url": "https://github.com/obsesivegamer"
+            },
+            "isAccessibleForFree": true,
+            "isBasedOn": [
+              "https://bsky.jazco.dev/stats",
+              "https://commons.wikimedia.org/wiki/File:Bluesky_Registered_Users.svg",
+              "https://bsky.app/profile/hourlybskyusers.bsky.social"
+            ],
+            "creditText": "Activity and user counts from Jaz's Bluesky index (bsky.jazco.dev); 2022-2024 user history from Wikimedia Commons \"Bluesky Registered Users.svg\" by VintageNebula, with data gathered by Jaz and Martin Kleppmann et al., CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), resampled to UTC day boundaries, re-interpolated and merged with other sources.",
+            "license": "https://github.com/obsesivegamer/Bluesky-User-Trends/blob/main/data/README.md",
+            "temporalCoverage": "2022-11-17/2026-10-07",
+            "dateModified": "2026-10-08T17:24:17.265Z",
+            "variableMeasured": [
+              "Total users",
+              "New users per day",
+              "Daily active users (lower bound)",
+              "Daily posters",
+              "Posts",
+              "Likes",
+              "Follows",
+              "Blocks"
+            ],
+            "distribution": [
+              {
+                "@type": "DataDownload",
+                "encodingFormat": "text/csv",
+                "contentUrl": "https://obsesivegamer.github.io/Bluesky-User-Trends/data/bluesky-daily.csv"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to dashboard</a>
+    <div class="background-effects" aria-hidden="true">
+        <div class="grid-overlay"></div>
+    </div>
+
+    <div class="dashboard-container">
+        <header class="dashboard-header terminal-panel">
+            <div class="header-brand">
+                <div class="terminal-badge">
+                    <span class="badge-pulse" aria-hidden="true"></span>
+                    <span class="badge-text">ATPROTO // BLUESKY</span>
+                </div>
+                <h1>Bluesky <span>Network Pulse</span></h1>
+                <p class="header-subtitle">User velocity, daily active users and daily posters for the Bluesky network, from Jaz’s public index. Refreshed twice a day.</p>
+            </div>
+            <div class="header-status-panel">
+                <div class="clock-block" aria-label="Clock">
+                    <div class="clock-row">
+                        <span class="clock-label">UTC</span>
+                        <span id="clock-utc" class="clock-utc tabular-stat">--:--:--</span>
+                    </div>
+                    <div class="clock-sub tabular-stat">
+                        <span id="clock-date">—</span>
+                        <span class="clock-sep" aria-hidden="true">·</span>
+                        <span class="clock-label">LOCAL</span>
+                        <span id="clock-local">--:--</span>
+                    </div>
+                </div>
+                <div class="status-stack">
+                    <div class="status-indicator archive" id="status-indicator" role="status">
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <span id="data-status">ARCHIVE</span>
+                        <span id="status-detail" class="visually-hidden"></span>
+                    </div>
+                    <div class="last-updated-badge">
+                        <span class="update-label">DATA THRU</span>
+                        <span class="tabular-stat update-value amber" id="last-updated-time" data-prerender="last-day">Oct 7, 2026</span>
+                        <span class="update-label">BUILD</span>
+                        <span class="tabular-stat update-value" data-prerender="generated">2026-10-08 17:24 UTC</span>
+                        <button type="button" id="refresh-data-btn" class="refresh-btn" title="Reload the page and data" aria-label="Reload the page and data"><span aria-hidden="true">↻</span></button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <section class="ticker terminal-panel" id="ticker" aria-label="Ticker: latest values (users is the current count, the rest the latest complete day), with the week-over-week change of each 7-day average">
+            <span class="ticker-tag" aria-hidden="true">BSKY</span>
+            <button type="button" class="ticker-pause" id="ticker-pause" aria-pressed="false" aria-label="Pause ticker" title="Pause or resume the ticker"><span class="pause-glyph" aria-hidden="true"></span></button>
+            <div class="ticker-viewport">
+                <div class="ticker-track">
+                    <ul class="ticker-items" id="ticker-items">
+<!-- prerender:ticker -->
+<li class="tick" data-tick="users"><span class="tick-sym">USERS</span><span class="tick-val">46,908,512</span><span class="tick-chg up"><span aria-hidden="true">▲</span> +0.24%</span></li>
+<li class="tick" data-tick="velocity"><span class="tick-sym">VEL/DAY 7D</span><span class="tick-val">+16.0K/day</span><span class="tick-chg down"><span aria-hidden="true">▼</span> -2.56%</span></li>
+<li class="tick" data-tick="dau"><span class="tick-sym">DAU</span><span class="tick-val">988.9K</span><span class="tick-chg up"><span aria-hidden="true">▲</span> +1.26%</span></li>
+<li class="tick" data-tick="posters"><span class="tick-sym">POSTERS</span><span class="tick-val">576.8K</span><span class="tick-chg up"><span aria-hidden="true">▲</span> +2.09%</span></li>
+<li class="tick" data-tick="posts"><span class="tick-sym">POSTS</span><span class="tick-val">3.44M</span><span class="tick-chg up"><span aria-hidden="true">▲</span> +1.79%</span></li>
+<li class="tick" data-tick="likes"><span class="tick-sym">LIKES</span><span class="tick-val">19.90M</span><span class="tick-chg up"><span aria-hidden="true">▲</span> +3.96%</span></li>
+<li class="tick" data-tick="follows"><span class="tick-sym">FOLLOWS</span><span class="tick-val">1.70M</span><span class="tick-chg up"><span aria-hidden="true">▲</span> +18.64%</span></li>
+<li class="tick" data-tick="blocks"><span class="tick-sym">BLOCKS</span><span class="tick-val">301.0K</span><span class="tick-chg up"><span aria-hidden="true">▲</span> +37.40%</span></li>
+<!-- /prerender:ticker -->
+                    </ul>
+                    <ul class="ticker-items ticker-clone" id="ticker-clone" aria-hidden="true"></ul>
+                </div>
+            </div>
+        </section>
+
+        <nav class="terminal-command-bar terminal-panel" aria-label="Dashboard controls">
+            <div class="command-group" role="group" aria-label="Time range">
+                <span class="command-label" aria-hidden="true">RANGE</span>
+                <div class="pill-segmented range-pill">
+                    <button type="button" class="time-btn" data-range="1W" aria-pressed="false" aria-keyshortcuts="1" title="Past week (key 1)">1W</button>
+                    <button type="button" class="time-btn" data-range="1M" aria-pressed="false" aria-keyshortcuts="2" title="Past month (key 2)">1M</button>
+                    <button type="button" class="time-btn" data-range="3M" aria-pressed="false" aria-keyshortcuts="3" title="Past 3 months (key 3)">3M</button>
+                    <button type="button" class="time-btn" data-range="6M" aria-pressed="false" aria-keyshortcuts="4" title="Past 6 months (key 4)">6M</button>
+                    <button type="button" class="time-btn" data-range="YTD" aria-pressed="false" aria-keyshortcuts="5" title="Year to date, from the Dec 31 close (key 5)">YTD</button>
+                    <button type="button" class="time-btn active" data-range="1Y" aria-pressed="true" aria-keyshortcuts="6" title="Past year (key 6)">1Y</button>
+                    <button type="button" class="time-btn" data-range="2Y" aria-pressed="false" aria-keyshortcuts="7" title="Past 2 years (key 7)">2Y</button>
+                    <button type="button" class="time-btn" data-range="ALL" aria-pressed="false" aria-keyshortcuts="8" title="All history since Nov 17, 2022 (key 8)">ALL</button>
+                </div>
+            </div>
+            <div class="command-group" role="group" aria-label="Studies">
+                <span class="command-label" aria-hidden="true">STUDY</span>
+                <div class="pill-segmented">
+                    <button type="button" class="control-btn active" id="toggle-ma-btn" aria-pressed="true" aria-keyshortcuts="M" title="7-day moving average (M)">7D MA</button>
+                    <button type="button" class="control-btn" id="toggle-log-btn" aria-pressed="false" aria-keyshortcuts="L" title="Logarithmic y-axis on the USR, DAU, ACT, REC and TOT charts (L)">LOG</button>
+                    <button type="button" class="control-btn" id="toggle-compare-btn" aria-pressed="false" aria-keyshortcuts="C" title="Overlay the prior period: the same number of days immediately before this range (C)">COMPARE</button>
+                </div>
+                <button type="button" class="control-btn guide-btn" id="open-guide-btn" aria-haspopup="dialog" aria-keyshortcuts="Shift+?" title="Guide: methodology, definitions and shortcuts (?)"><span aria-hidden="true">?</span> GUIDE</button>
+            </div>
+            <div class="command-group range-status" aria-live="polite">
+                <span class="range-display">VIEWING <strong id="selected-range-label">Past Year</strong>
+                    <span id="selected-range-dates" class="range-dates">Oct 7, 2025 → Oct 7, 2026 · 366 pts</span>
+                    <span id="prior-range-dates" class="prior-dates" hidden></span>
+                </span>
+            </div>
+        </nav>
+
+        <div class="data-error terminal-panel" id="data-error" role="alert" hidden>
+            <strong>DATA ERROR</strong> <span class="data-error-msg"></span>
+        </div>
+        <noscript>
+            <p class="noscript terminal-panel">Charts, ranges and the live user count need JavaScript. The numbers on this page are pre-rendered from the latest daily build.</p>
+        </noscript>
+
+        <p id="chart-live" class="visually-hidden" aria-live="polite"></p>
+        <main id="main" class="dashboard-grid">
+            <section class="metrics-row" aria-label="Key metrics">
+                <article class="metric-card terminal-panel card-users" id="card-users">
+                    <div class="card-header">
+                        <h2 class="metric-title">TOTAL USERS</h2>
+                        <span class="card-chips">
+                            <span class="metric-chip chip-est" id="kpi-users-est" hidden>EST</span>
+                            <span class="metric-chip chip-amber" id="kpi-users-chip">SNAPSHOT</span>
+                        </span>
+                    </div>
+                    <div class="card-body">
+                        <span class="value tabular-stat" id="kpi-users-value" data-prerender="users-total">46,908,512</span>
+                        <span class="trend flat" id="kpi-users-trend">—</span>
+                        <p class="comparison" id="kpi-users-comp">—</p>
+                        <p class="comparison note" id="kpi-users-note" hidden></p>
+                        <p class="comparison prior-line" id="kpi-users-prior" hidden></p>
+                    </div>
+                    <div class="card-footer">
+                        <svg class="sparkline-svg" id="spark-users" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path class="sparkline-path sparkline-users" d=""/></svg>
+                    </div>
+                </article>
+
+                <article class="metric-card terminal-panel" id="card-velocity">
+                    <div class="card-header">
+                        <h2 class="metric-title">USER VELOCITY</h2>
+                        <span class="metric-chip chip-amber">7D AVG</span>
+                    </div>
+                    <div class="card-body">
+                        <span class="value tabular-stat" id="kpi-velocity-value" data-prerender="velocity-7d">+16.0K/day</span>
+                        <span class="trend flat" id="kpi-velocity-trend">—</span>
+                        <p class="comparison">LAST DAY <span class="c-val" data-prerender="velocity-last">+16.0K</span> · PEAK <span class="c-val" data-prerender="velocity-peak">+995.7K</span> <span class="nowrap" data-prerender="velocity-peak-date">Nov 14, 2024 (est.)</span></p>
+                        <p class="comparison prior-line" id="kpi-velocity-prior" hidden></p>
+                    </div>
+                    <div class="card-footer">
+                        <svg class="sparkline-svg" id="spark-velocity" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path class="sparkline-path sparkline-velocity" d=""/></svg>
+                    </div>
+                </article>
+
+                <article class="metric-card terminal-panel" id="card-dau">
+                    <div class="card-header">
+                        <h2 class="metric-title">DAILY ACTIVE USERS</h2>
+                        <span class="metric-chip chip-blue" title="Accounts that liked, posted, followed or blocked. Readers are invisible to the firehose, so true DAU is higher.">LOWER BOUND</span>
+                    </div>
+                    <div class="card-body">
+                        <span class="value tabular-stat" id="kpi-dau-value" data-prerender="dau">988.9K</span>
+                        <span class="trend flat" id="kpi-dau-trend">—</span>
+                        <p class="comparison">ATH <span class="c-val" data-prerender="dau-peak">3.12M</span> · <span data-prerender="dau-peak-date">Nov 18, 2024</span></p>
+                        <p class="comparison prior-line" id="kpi-dau-prior" hidden></p>
+                    </div>
+                    <div class="card-footer">
+                        <svg class="sparkline-svg" id="spark-dau" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path class="sparkline-path sparkline-dau" d=""/></svg>
+                    </div>
+                </article>
+
+                <article class="metric-card terminal-panel" id="card-posters">
+                    <div class="card-header">
+                        <h2 class="metric-title">DAILY POSTERS</h2>
+                        <span class="metric-chip chip-magenta">≥1 POST</span>
+                    </div>
+                    <div class="card-body">
+                        <span class="value tabular-stat" id="kpi-posters-value" data-prerender="posters">576.8K</span>
+                        <span class="trend flat" id="kpi-posters-trend">—</span>
+                        <p class="comparison">ATH <span class="c-val" data-prerender="posters-peak">1.48M</span> · <span data-prerender="posters-peak-date">Nov 19, 2024</span></p>
+                        <p class="comparison prior-line" id="kpi-posters-prior" hidden></p>
+                    </div>
+                    <div class="card-footer">
+                        <svg class="sparkline-svg" id="spark-posters" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path class="sparkline-path sparkline-posters" d=""/></svg>
+                    </div>
+                </article>
+
+                <article class="metric-card terminal-panel" id="card-ratio">
+                    <div class="card-header">
+                        <h2 class="metric-title">POSTER RATIO</h2>
+                        <span class="metric-chip chip-magenta">POSTERS ÷ DAU</span>
+                    </div>
+                    <div class="card-body">
+                        <span class="value tabular-stat" id="kpi-ratio-value" data-prerender="poster-ratio">58.3%</span>
+                        <span class="trend flat" id="kpi-ratio-trend">—</span>
+                        <p class="comparison">DAU SHARE OF USERS <span class="c-val" data-prerender="dau-share">2.11%</span></p>
+                        <p class="comparison prior-line" id="kpi-ratio-prior" hidden></p>
+                    </div>
+                    <div class="card-footer">
+                        <svg class="sparkline-svg" id="spark-ratio" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path class="sparkline-path sparkline-ratio" d=""/></svg>
+                    </div>
+                </article>
+            </section>
+
+            <section class="index-strip terminal-panel" aria-labelledby="index-strip-title">
+                <h2 class="strip-label" id="index-strip-title"><span class="fn-key" aria-hidden="true"><span class="fn-code">IDX</span></span> Jaz index totals <span class="strip-note">since 2023-03-01 · sums of Jaz’s daily counts, not network-wide</span></h2>
+                <dl class="index-stats">
+                    <div class="index-stat"><dt>TOTAL POSTS</dt><dd class="tabular-stat" data-prerender="index-posts">3.288B</dd></div>
+                    <div class="index-stat"><dt>TOTAL LIKES</dt><dd class="tabular-stat" data-prerender="index-likes">18.201B</dd></div>
+                    <div class="index-stat"><dt>TOTAL FOLLOWS</dt><dd class="tabular-stat" data-prerender="index-follows">3.929B</dd></div>
+                </dl>
+            </section>
+
+            <section class="chart-section terminal-panel chart-wide" id="section-velocity-chart" aria-labelledby="velocity-chart-heading">
+                <div class="panel-bar">
+                    <div class="panel-title">
+                        <span class="fn-key" aria-hidden="true"><span class="fn-code">USR</span><span class="fn-go">GO</span></span>
+                        <h2 id="velocity-chart-heading">User velocity <span class="h-sub">new accounts per day</span></h2>
+                    </div>
+                    <div class="panel-tools">
+                        <div class="pill-segmented mode-pill" role="group" aria-label="Velocity mode">
+                            <button type="button" class="vel-mode-btn active" data-mode="new" aria-pressed="true" title="New accounts per day">NEW/DAY</button>
+                            <button type="button" class="vel-mode-btn" data-mode="pct" aria-pressed="false" title="New accounts as a percentage of the previous day’s total">GROWTH %</button>
+                        </div>
+                        <span class="scale-tag log-capable" title="Linear y-axis (press L for logarithmic)">LIN</span>
+                        <button type="button" class="tool-btn export-png-btn" data-chart="velocity" aria-label="Export user velocity chart as PNG">PNG</button>
+                        <button type="button" class="tool-btn export-csv-btn" data-chart="velocity" aria-label="Export visible user velocity data as CSV">CSV</button>
+                        <button type="button" class="tool-btn reset-zoom-btn" data-chart="velocity" aria-label="Reset user velocity chart zoom"><span aria-hidden="true">⟲</span> ZOOM</button>
+                    </div>
+                </div>
+                <p class="chart-subtitle" id="velocity-chart-subtitle">New accounts per UTC day, as counted by Jaz. Hatched bars are estimated days.</p>
+                <div class="legend-row">
+                    <span class="legend-badge"><span class="legend-swatch sw-velocity" aria-hidden="true"></span>Observed day</span>
+                    <span class="legend-badge"><span class="legend-swatch sw-velocity hatched" aria-hidden="true"></span>Estimated day</span>
+                    <span class="legend-badge ma-legend"><span class="legend-line line-ma" aria-hidden="true"></span>7D avg</span>
+                    <button type="button" class="legend-badge chart-comparison-legend open-guide-link" hidden title="How the prior period works"><span class="legend-line line-prior" aria-hidden="true"></span>Prior period</button>
+                </div>
+                <div class="wave-bar" role="group" aria-labelledby="wave-label">
+                    <span class="wave-label" id="wave-label"><span aria-hidden="true">⚡</span> MIGRATION WAVES</span>
+                    <div class="wave-chips">
+                        <button type="button" class="wave-chip" data-wave="W24FEB" aria-pressed="false"><span class="chip-title">Feb 2024 · Open registration</span><span class="chip-val">+1.97M</span></button>
+                        <button type="button" class="wave-chip" data-wave="W24BRA" aria-pressed="false"><span class="chip-title">Aug–Sep 2024 · Brazil X ban</span><span class="chip-val">+4.05M</span></button>
+                        <button type="button" class="wave-chip" data-wave="W24OCT" aria-pressed="false"><span class="chip-title">Oct 2024 · X block-policy change</span><span class="chip-val">+2.80M</span></button>
+                        <button type="button" class="wave-chip" data-wave="W24NOV" aria-pressed="false"><span class="chip-title">Nov 2024 · Post-election exodus</span><span class="chip-val">+11.47M</span></button>
+                        <button type="button" class="wave-reset" id="reset-wave-btn" hidden><span aria-hidden="true">✕</span> RESET</button>
+                    </div>
+                </div>
+                <div class="chart-container chart-tall">
+                    <canvas id="velocityChart" role="img" tabindex="0" aria-label="User velocity chart. Daily values are in the data table below."></canvas>
+                </div>
+                <p class="chart-foot">CTRL + SCROLL OR PINCH: ZOOM · DRAG: PAN · FOCUS A CHART AND USE ← → TO STEP DAYS</p>
+            </section>
+
+            <section class="chart-section terminal-panel chart-wide" id="section-dau-chart" aria-labelledby="dau-chart-heading">
+                <div class="panel-bar">
+                    <div class="panel-title">
+                        <span class="fn-key" aria-hidden="true"><span class="fn-code">DAU</span><span class="fn-go">GO</span></span>
+                        <h2 id="dau-chart-heading">Daily active users &amp; posters <span class="h-sub">lower bound</span></h2>
+                    </div>
+                    <div class="panel-tools">
+                        <span class="scale-tag log-capable" title="Linear y-axis (press L for logarithmic)">LIN</span>
+                        <button type="button" class="tool-btn export-png-btn" data-chart="dau" aria-label="Export daily active users chart as PNG">PNG</button>
+                        <button type="button" class="tool-btn export-csv-btn" data-chart="dau" aria-label="Export visible daily active users data as CSV">CSV</button>
+                        <button type="button" class="tool-btn reset-zoom-btn" data-chart="dau" aria-label="Reset daily active users chart zoom"><span aria-hidden="true">⟲</span> ZOOM</button>
+                    </div>
+                </div>
+                <p class="chart-subtitle">Distinct accounts that liked, posted, followed or blocked (DAU), and accounts that posted, per UTC day. Shaded columns are collection outages.</p>
+                <div class="legend-row">
+                    <span class="legend-badge"><span class="legend-line line-dau" aria-hidden="true"></span>DAU (lower bound)</span>
+                    <span class="legend-badge"><span class="legend-line line-posters" aria-hidden="true"></span>Posters</span>
+                    <span class="legend-badge ma-legend"><span class="legend-note">faint = daily · solid = 7D avg</span></span>
+                    <span class="legend-badge"><span class="legend-swatch sw-outage" aria-hidden="true"></span>Outage (gap)</span>
+                    <button type="button" class="legend-badge chart-comparison-legend open-guide-link" hidden title="How the prior period works"><span class="legend-line line-prior" aria-hidden="true"></span>Prior period</button>
+                </div>
+                <div class="chart-container chart-mid">
+                    <canvas id="dauChart" role="img" tabindex="0" aria-label="Daily active users and posters chart. Daily values are in the data table below."></canvas>
+                </div>
+            </section>
+
+            <div class="charts-quad">
+                <section class="chart-section terminal-panel" id="section-act-chart" aria-labelledby="act-chart-heading">
+                    <div class="panel-bar">
+                        <div class="panel-title">
+                            <span class="fn-key" aria-hidden="true"><span class="fn-code">ACT</span><span class="fn-go">GO</span></span>
+                            <h2 id="act-chart-heading">Firehose actors <span class="h-sub">unique accounts / day</span></h2>
+                        </div>
+                        <div class="panel-tools">
+                            <span class="scale-tag log-capable" title="Linear y-axis (press L for logarithmic)">LIN</span>
+                            <button type="button" class="tool-btn export-png-btn" data-chart="act" aria-label="Export firehose actors chart as PNG">PNG</button>
+                            <button type="button" class="tool-btn export-csv-btn" data-chart="act" aria-label="Export visible firehose actors data as CSV">CSV</button>
+                            <button type="button" class="tool-btn reset-zoom-btn" data-chart="act" aria-label="Reset firehose actors chart zoom"><span aria-hidden="true">⟲</span></button>
+                        </div>
+                    </div>
+                    <p class="chart-subtitle">Distinct accounts per UTC day that liked, posted, followed or blocked. Click a series to hide it.</p>
+                    <div class="legend-row series-toggles" role="group" aria-label="Series">
+                        <button type="button" class="series-toggle active" data-group="act" data-series="likers" aria-pressed="true"><span class="legend-line line-likers" aria-hidden="true"></span>Likers</button>
+                        <button type="button" class="series-toggle active" data-group="act" data-series="posters" aria-pressed="true"><span class="legend-line line-posters" aria-hidden="true"></span>Posters</button>
+                        <button type="button" class="series-toggle active" data-group="act" data-series="followers" aria-pressed="true" title="Accounts that followed someone that day"><span class="legend-line line-followers" aria-hidden="true"></span>Followers</button>
+                        <button type="button" class="series-toggle active" data-group="act" data-series="blockers" aria-pressed="true" title="Accounts that blocked someone that day"><span class="legend-line line-blockers" aria-hidden="true"></span>Blockers</button>
+                        <span class="legend-badge legend-note" title="Full-height shading: every plotted series is missing that day. Faint shading with a red baseline strip: only some series are missing."><span class="legend-swatch sw-outage" aria-hidden="true"></span>Outage</span>
+                    </div>
+                    <div class="chart-container chart-quad">
+                        <canvas id="actChart" role="img" tabindex="0" aria-label="Firehose actors chart. Daily values are in the data table below."></canvas>
+                    </div>
+                </section>
+
+                <section class="chart-section terminal-panel" id="section-rec-chart" aria-labelledby="rec-chart-heading">
+                    <div class="panel-bar">
+                        <div class="panel-title">
+                            <span class="fn-key" aria-hidden="true"><span class="fn-code">REC</span><span class="fn-go">GO</span></span>
+                            <h2 id="rec-chart-heading">Daily records <span class="h-sub">records created / day</span></h2>
+                        </div>
+                        <div class="panel-tools">
+                            <span class="scale-tag log-capable" title="Linear y-axis (press L for logarithmic)">LIN</span>
+                            <button type="button" class="tool-btn export-png-btn" data-chart="rec" aria-label="Export daily records chart as PNG">PNG</button>
+                            <button type="button" class="tool-btn export-csv-btn" data-chart="rec" aria-label="Export visible daily records data as CSV">CSV</button>
+                            <button type="button" class="tool-btn reset-zoom-btn" data-chart="rec" aria-label="Reset daily records chart zoom"><span aria-hidden="true">⟲</span></button>
+                        </div>
+                    </div>
+                    <p class="chart-subtitle">Records created per UTC day. Likes dwarf the rest: press LOG to compare shapes.</p>
+                    <div class="legend-row series-toggles" role="group" aria-label="Series">
+                        <button type="button" class="series-toggle active" data-group="rec" data-series="likes" aria-pressed="true"><span class="legend-line line-likers" aria-hidden="true"></span>Likes</button>
+                        <button type="button" class="series-toggle active" data-group="rec" data-series="posts" aria-pressed="true"><span class="legend-line line-posters" aria-hidden="true"></span>Posts</button>
+                        <button type="button" class="series-toggle active" data-group="rec" data-series="follows" aria-pressed="true"><span class="legend-line line-followers" aria-hidden="true"></span>Follows</button>
+                        <button type="button" class="series-toggle active" data-group="rec" data-series="blocks" aria-pressed="true"><span class="legend-line line-blockers" aria-hidden="true"></span>Blocks</button>
+                        <span class="legend-badge legend-note" title="Full-height shading: every plotted series is missing that day. Faint shading with a red baseline strip: only some series are missing."><span class="legend-swatch sw-outage" aria-hidden="true"></span>Outage</span>
+                    </div>
+                    <div class="chart-container chart-quad">
+                        <canvas id="recChart" role="img" tabindex="0" aria-label="Daily records chart. Daily values are in the data table below."></canvas>
+                    </div>
+                </section>
+
+                <section class="chart-section terminal-panel" id="section-rat-chart" aria-labelledby="rat-chart-heading">
+                    <div class="panel-bar">
+                        <div class="panel-title">
+                            <span class="fn-key" aria-hidden="true"><span class="fn-code">RAT</span><span class="fn-go">GO</span></span>
+                            <h2 id="rat-chart-heading">Ratios</h2>
+                        </div>
+                        <div class="panel-tools">
+                            <span class="scale-tag" title="Ratios always use a linear scale">LIN</span>
+                            <button type="button" class="tool-btn export-png-btn" data-chart="rat" aria-label="Export ratios chart as PNG">PNG</button>
+                            <button type="button" class="tool-btn export-csv-btn" data-chart="rat" aria-label="Export visible ratio data as CSV">CSV</button>
+                            <button type="button" class="tool-btn reset-zoom-btn" data-chart="rat" aria-label="Reset ratios chart zoom"><span aria-hidden="true">⟲</span></button>
+                        </div>
+                    </div>
+                    <p class="chart-subtitle" id="rat-chart-subtitle">Posters ÷ DAU: share of active accounts that posted</p>
+                    <div class="legend-row">
+                        <div class="pill-segmented mode-pill rat-pill" role="group" aria-label="Ratio">
+                            <button type="button" class="rat-mode-btn active" data-mode="poster_ratio" aria-pressed="true">POSTERS/DAU</button>
+                            <button type="button" class="rat-mode-btn" data-mode="dau_share" aria-pressed="false">DAU/USERS</button>
+                            <button type="button" class="rat-mode-btn" data-mode="posts_per_poster" aria-pressed="false">POSTS/POSTER</button>
+                            <button type="button" class="rat-mode-btn" data-mode="likes_per_liker" aria-pressed="false">LIKES/LIKER</button>
+                        </div>
+                    </div>
+                    <div class="chart-container chart-quad">
+                        <canvas id="ratChart" role="img" tabindex="0" aria-label="Ratios chart. Daily values are in the data table below."></canvas>
+                    </div>
+                </section>
+
+                <section class="chart-section terminal-panel" id="section-tot-chart" aria-labelledby="tot-chart-heading">
+                    <div class="panel-bar">
+                        <div class="panel-title">
+                            <span class="fn-key" aria-hidden="true"><span class="fn-code">TOT</span><span class="fn-go">GO</span></span>
+                            <h2 id="tot-chart-heading">Total users <span class="h-sub">end of UTC day</span></h2>
+                        </div>
+                        <div class="panel-tools">
+                            <span class="scale-tag log-capable" title="Linear y-axis (press L for logarithmic)">LIN</span>
+                            <button type="button" class="tool-btn export-png-btn" data-chart="tot" aria-label="Export total users chart as PNG">PNG</button>
+                            <button type="button" class="tool-btn export-csv-btn" data-chart="tot" aria-label="Export visible total users data as CSV">CSV</button>
+                            <button type="button" class="tool-btn reset-zoom-btn" data-chart="tot" aria-label="Reset total users chart zoom"><span aria-hidden="true">⟲</span></button>
+                        </div>
+                    </div>
+                    <p class="chart-subtitle">Accounts counted on Bluesky-operated PDS hosts at the end of each UTC day (later deletions are not subtracted).</p>
+                    <div class="legend-row">
+                        <span class="legend-badge"><span class="legend-line line-users" aria-hidden="true"></span>Observed</span>
+                        <span class="legend-badge"><span class="legend-line line-users dashed" aria-hidden="true"></span>Estimated</span>
+                        <button type="button" class="legend-badge chart-comparison-legend open-guide-link" hidden title="How the prior period works"><span class="legend-line line-prior" aria-hidden="true"></span>Prior period</button>
+                    </div>
+                    <div class="chart-container chart-quad">
+                        <canvas id="totChart" role="img" tabindex="0" aria-label="Total users chart. Daily values are in the data table below."></canvas>
+                    </div>
+                </section>
+            </div>
+
+            <section class="terminal-panel table-panel" id="section-table" aria-labelledby="table-heading">
+                <div class="panel-bar">
+                    <div class="panel-title">
+                        <span class="fn-key" aria-hidden="true"><span class="fn-code">TBL</span><span class="fn-go">GO</span></span>
+                        <h2 id="table-heading">Daily data <span class="h-sub" id="table-range-label">last 30 days of the range</span></h2>
+                    </div>
+                    <div class="panel-tools">
+                        <a class="tool-btn" href="data/bluesky-daily.csv" download>FULL CSV</a>
+                    </div>
+                </div>
+                <p class="chart-subtitle">The last 30 days of the selected range, newest first. <span class="est-key">~</span> marks an estimated user count; “outage” marks a collection outage, treated as missing. Full history since Nov 17, 2022: <a href="data/bluesky-daily.csv">data/bluesky-daily.csv</a> (<a href="https://github.com/obsesivegamer/Bluesky-User-Trends/blob/main/data/README.md" target="_blank" rel="noopener">sources and terms</a>).</p>
+                <div class="table-responsive" tabindex="0" role="region" aria-labelledby="table-heading">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Date</th>
+                                <th scope="col">Users</th>
+                                <th scope="col">New/day</th>
+                                <th scope="col">DAU</th>
+                                <th scope="col">Posters</th>
+                                <th scope="col">Posts</th>
+                                <th scope="col">Likes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="data-table-body"></tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+
+        <section class="terminal-panel insights-panel" id="insights-section" aria-labelledby="insights-heading">
+            <div class="insights-header">
+                <div class="terminal-badge">
+                    <span class="badge-pulse" aria-hidden="true"></span>
+                    <span class="badge-text">NETWORK INTELLIGENCE // RESEARCH BRIEF</span>
+                </div>
+                <h2 id="insights-heading">Bluesky user stats, growth &amp; daily activity</h2>
+                <p class="insights-summary">Bluesky has <strong data-prerender="users-total-compact">46.91M</strong> accounts on Bluesky-operated servers. This brief tracks how fast that number grows, how many accounts are active each day and how many of them post, with daily numbers since November 2022 built from Jaz’s public index and archived counts. Daily data runs through <span data-prerender="last-day">Oct 7, 2026</span>.</p>
+            </div>
+
+            <div class="insights-grid">
+                <div class="insight-card">
+                    <h3 class="insight-title"><span class="insight-code" aria-hidden="true">USR</span> User velocity</h3>
+                    <p>New accounts per UTC day, from end-of-day user counts (Jaz’s counter adds accounts and never subtracts deletions). The last 7 days averaged <strong data-prerender="velocity-7d">+16.0K/day</strong>; the largest day was <strong data-prerender="velocity-peak">+995.7K</strong> on <span data-prerender="velocity-peak-date">Nov 14, 2024 (est.)</span>. Migration waves (February 2024, August–November 2024) show up as sharp spikes.</p>
+                </div>
+                <div class="insight-card">
+                    <h3 class="insight-title"><span class="insight-code" aria-hidden="true">DAU</span> Daily active users (lower bound)</h3>
+                    <p><strong data-prerender="dau">988.9K</strong> accounts liked, posted, followed or blocked on <span data-prerender="activity-day">Oct 7, 2026</span>: <strong data-prerender="dau-share">2.11%</strong> of all accounts. The firehose can’t see people who only read, so true daily usage is higher.</p>
+                </div>
+                <div class="insight-card">
+                    <h3 class="insight-title"><span class="insight-code" aria-hidden="true">PST</span> Posters</h3>
+                    <p><strong data-prerender="posters">576.8K</strong> accounts posted on <span data-prerender="activity-day">Oct 7, 2026</span>, a poster ratio of <strong data-prerender="poster-ratio">58.3%</strong> of active accounts. Posting peaked at <strong data-prerender="posters-peak">1.48M</strong> accounts on <span data-prerender="posters-peak-date">Nov 19, 2024</span>.</p>
+                </div>
+            </div>
+
+            <div class="insights-table-wrap">
+                <div class="table-header-group">
+                    <span class="table-tag">ARCHIVAL DIGEST // 2022–PRESENT</span>
+                    <h3 class="insights-table-title" id="milestones-heading">Bluesky growth milestones</h3>
+                </div>
+                <div class="table-responsive" tabindex="0" role="region" aria-labelledby="milestones-heading">
+                    <table class="insights-data-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Date</th>
+                                <th scope="col">Total users</th>
+                                <th scope="col">New/day (7D avg)</th>
+                                <th scope="col">DAU</th>
+                                <th scope="col">Posters</th>
+                                <th scope="col">Context</th>
+                            </tr>
+                        </thead>
+                        <tbody id="milestones-body">
+<!-- prerender:milestones -->
+<tr><td><strong>Mar 1, 2023</strong></td><td class="num">1,037</td><td class="num">+97</td><td class="num">421</td><td class="num">406</td><td>Activity data begins (first day in Jaz’s daily index)</td></tr>
+<tr><td><strong>May 1, 2023</strong></td><td class="num">53,005</td><td class="num">+2.4K</td><td class="num">15.1K</td><td class="num">13.3K</td><td>Post data collection starts; earlier activity is reconstructed and undercounted</td></tr>
+<tr class="highlight-row"><td><strong>Feb 6, 2024</strong></td><td class="num est" title="Estimated: no reading near the end of this UTC day; interpolated">~3,434,366</td><td class="num est" title="Estimated: the 7-day window includes estimated user counts">~+46.8K</td><td class="num">252.6K</td><td class="num">182.8K</td><td>Bluesky opens public sign-ups (no invite code needed)</td></tr>
+<tr class="highlight-row"><td><strong>Aug 30, 2024</strong></td><td class="num est" title="Estimated: no reading near the end of this UTC day; interpolated">~6,634,799</td><td class="num est" title="Estimated: the 7-day window includes estimated user counts">~+56.5K</td><td class="num">467.8K</td><td class="num">353.3K</td><td>Brazil suspends X; a migration wave reaches Bluesky</td></tr>
+<tr class="highlight-row"><td><strong>Nov 18, 2024</strong></td><td class="num">19,687,518</td><td class="num est" title="Estimated: the 7-day window includes estimated user counts">~+741.3K</td><td class="num">3.12M</td><td class="num">1.48M</td><td>Post-election peak: record daily active accounts</td></tr>
+<tr><td><strong>Jan 1, 2025</strong></td><td class="num">25,955,518</td><td class="num">+22.8K</td><td class="num">1.68M</td><td class="num">937.6K</td><td>First day of 2025 (Bluesky reported 25.94M users at the start of the year)</td></tr>
+<tr><td><strong>Jan 1, 2026</strong></td><td class="num">41,435,060</td><td class="num est" title="Estimated: the 7-day window includes estimated user counts">~+31.1K</td><td class="num">1.23M</td><td class="num">696.3K</td><td>First day of 2026 (Bluesky reported 41.41M users at the end of 2025)</td></tr>
+<tr class="current-row"><td><strong>Oct 7, 2026</strong></td><td class="num">46,897,061</td><td class="num">+16.0K</td><td class="num">988.9K</td><td class="num">576.8K</td><td>Latest complete UTC day</td></tr>
+<!-- /prerender:milestones -->
+                        </tbody>
+                    </table>
+                </div>
+                <p class="chart-subtitle table-note"><span class="est-key">~</span> marks an estimated value (interpolated user counts, or a 7-day average that includes them).</p>
+            </div>
+
+            <div class="insights-faq-wrap">
+                <h3 class="faq-section-title">Frequently asked questions // Bluesky user stats</h3>
+                <div class="faq-accordion">
+                    <details class="faq-item" open>
+                        <summary class="faq-question"><span>How many users does Bluesky have?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+                        <div class="faq-answer"><p>As of <span data-prerender="users-at">2026-10-08 17:24 UTC</span>, Bluesky has <strong data-prerender="users-total">46,908,512</strong> accounts on Bluesky-operated PDS hosts, according to Jaz’s counter. The counter adds each account that is active when it first lists it and never subtracts later deletions or deactivations, so it is closer to cumulative sign-ups on Bluesky’s own servers than to active accounts. Self-hosted and third-party PDS accounts are not included. It matches Bluesky’s official year-end figures: 25.94M users on Jan 1, 2025 and 41.41M on Dec 31, 2025.</p></div>
+                    </details>
+                    <details class="faq-item">
+                        <summary class="faq-question"><span>How many daily active users does Bluesky have?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+                        <div class="faq-answer"><p>At least <strong data-prerender="dau">988.9K</strong> accounts were active on Bluesky on <span data-prerender="activity-day">Oct 7, 2026</span>: that many distinct accounts created a like, post, follow or block that UTC day. This is a lower bound, because Jaz’s index counts likes, posts, follows and blocks only, so people who only read or repost are not counted. Similarweb estimated about 3 million mobile daily active users in July 2026 (TechCrunch, Aug 11, 2026). The record is <strong data-prerender="dau-peak">3.12M</strong> on <span data-prerender="dau-peak-date">Nov 18, 2024</span>.</p></div>
+                    </details>
+                    <details class="faq-item">
+                        <summary class="faq-question"><span>How many people post on Bluesky each day?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+                        <div class="faq-answer"><p><strong data-prerender="posters">576.8K</strong> accounts published at least one post (including replies and quotes) on <span data-prerender="activity-day">Oct 7, 2026</span>. That is <strong data-prerender="poster-ratio">58.3%</strong> of daily active accounts. The record is <strong data-prerender="posters-peak">1.48M</strong> posters on <span data-prerender="posters-peak-date">Nov 19, 2024</span>.</p></div>
+                    </details>
+                    <details class="faq-item">
+                        <summary class="faq-question"><span>How fast is Bluesky growing?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+                        <div class="faq-answer"><p>Over the last 7 days Bluesky added an average of <strong data-prerender="velocity-7d">+16.0K/day</strong> new accounts (user velocity, as counted by Jaz). The latest day added <strong data-prerender="velocity-last">+16.0K</strong>. The largest single day in this data is <strong data-prerender="velocity-peak">+995.7K</strong> on <span data-prerender="velocity-peak-date">Nov 14, 2024 (est.)</span>; “(est.)” means that day’s user counts are interpolated, so its exact size and date are uncertain.</p></div>
+                    </details>
+                    <details class="faq-item">
+                        <summary class="faq-question"><span>Where does this Bluesky data come from?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+                        <div class="faq-answer"><p>Daily activity and the current user count come from Jaz’s Bluesky index (bsky.jazco.dev/stats). User history before July 2024 comes from the Wikimedia Commons “Bluesky Registered Users” series; later history comes from hourly posts by @hourlybskyusers.bsky.social, Wayback Machine captures of Jaz’s counter, and the Krekeny and elaval archives. A GitHub Action refreshes the data twice a day.</p></div>
+                    </details>
+                    <details class="faq-item">
+                        <summary class="faq-question"><span>Why are some days missing or marked as estimated?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+                        <div class="faq-answer"><p>Jaz’s indexer had collection outages, for example Aug 31 – Sep 6, 2024 and Apr 13–14, 2026. Those days are shown as gaps and left out of averages, peaks and comparisons. User counts for days without a nearby observation are interpolated and marked as estimated: hatched bars, dashed lines and a ~ in the table.</p></div>
+                    </details>
+                </div>
+            </div>
+
+            <div class="notes-grid">
+                <section class="notes-block" aria-labelledby="footnotes-heading">
+                    <h3 class="faq-section-title" id="footnotes-heading">Definitions &amp; caveats</h3>
+                    <ul class="notes-list">
+                        <li><strong>Total users</strong> is Jaz’s <code>total_users</code>: accounts on Bluesky-operated PDS hosts, counted with <code>com.atproto.sync.listRepos</code>. The counter adds each account that is active when it first lists it and never subtracts later deletions or deactivations. Self-hosted and third-party PDS accounts are not included. It matches Bluesky’s official year-end figures (25.94M on 2025-01-01, 41.41M on 2025-12-31). From July 2024 each day’s value is the count at 00:00 UTC the next day (read or interpolated from timestamped readings); earlier values are Wikimedia Commons once-a-day readings, treated as end of day.</li>
+                        <li><strong>User velocity</strong> is new accounts per UTC day (today’s total minus yesterday’s), shown with a 7-day average. Because the counter never subtracts deleted accounts, it measures sign-ups rather than net growth. Growth % is new accounts divided by the previous day’s total. <em>Velocity growth</em> is the change in the 7-day average velocity, for example against the prior week or period.</li>
+                        <li><strong>Daily active users (DAU, lower bound)</strong> are distinct accounts that created at least one like, post, follow or block that UTC day, as seen on the public firehose by Jaz’s indexer. It is a lower bound: readers, lurkers and repost-only accounts are not counted. Similarweb estimated about 3M mobile DAU in July 2026 (<a href="https://techcrunch.com/?p=3151942" target="_blank" rel="noopener">TechCrunch, 2026-08-11</a>). Bots and bridged accounts are not excluded. Counts are statistical estimates (about ±1%), recent days may still rise slightly, and today’s partial day is hidden.</li>
+                        <li><strong>Daily posters</strong> are distinct accounts that published at least one post, including replies and quotes, that UTC day.</li>
+                        <li><strong>Ratios:</strong> poster ratio = posters ÷ DAU; DAU share = DAU ÷ total users; posts per poster; likes per liker. <strong>Index totals</strong> are sums of Jaz’s daily counts since 2023-03-01, not network-wide all-time totals.</li>
+                        <li><strong>Trend badges</strong> compare 7-day averages at the start and end of the selected range (1W = week over week, 1M = month over month, 1Y = year over year). <strong>COMPARE</strong> overlays the same number of calendar days immediately before the range.</li>
+                        <li><strong>Collection outages</strong> (shown as gaps, excluded from averages, peaks and comparisons): 2024-08-31 → 2024-09-07, 2024-09-10, 2024-10-23 (likes), 2025-04-22, 2025-05-20 (likes), 2026-04-13 → 15. Partial days are confirmed against Kuba Suder’s independent firehose counts. Block data is missing 2025-09-19 → 2025-12-19. Activity before 2023-05-01 is reconstructed and undercounted.</li>
+                        <li><strong>Estimated user counts</strong> (interpolated; rows are dated by the day they end): most days 2024-07-02 → 2024-11-15 (sparse archives, shaped with PLC directory creation rates), 2025-03-14 → 24 and 2026-04-13 → 24 (Jaz’s counter offline), 2026-02-23 → 27 (stale counter), short gaps in the hourly feed (2025-12-31, and 1–6 days at a time in May–August 2026), and gaps in the Commons series in 2022–23 and 2024.</li>
+                    </ul>
+                </section>
+                <section class="notes-block" aria-labelledby="sources-heading">
+                    <h3 class="faq-section-title" id="sources-heading">Sources &amp; credits</h3>
+                    <ul class="notes-list">
+                        <li>Activity and user counts: <strong>Jaz’s Bluesky index</strong>, <a href="https://bsky.jazco.dev/stats" target="_blank" rel="noopener">bsky.jazco.dev/stats</a> by <a href="https://bsky.app/profile/jaz.bsky.social" target="_blank" rel="noopener">@jaz.bsky.social</a> (code: <a href="https://github.com/jazware/bsky-experiments" target="_blank" rel="noopener">jazware/bsky-experiments</a>).</li>
+                        <li>User history Nov 2022 → Jul 2024: Wikimedia Commons <a href="https://commons.wikimedia.org/wiki/File:Bluesky_Registered_Users.svg" target="_blank" rel="noopener">“Bluesky Registered Users.svg”</a> by VintageNebula, with data gathered by Jaz and Martin Kleppmann et al. (<a href="https://arxiv.org/abs/2402.03239" target="_blank" rel="noopener">arXiv:2402.03239</a>), licensed <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>. Changed here: values assigned to UTC day boundaries, the series’ own interpolated dates replaced by re-interpolation, and merged with the sources below.</li>
+                        <li>Hourly user counts: <a href="https://bsky.app/profile/hourlybskyusers.bsky.social" target="_blank" rel="noopener">@hourlybskyusers.bsky.social</a> by <a href="https://bsky.app/profile/jordan.weatherby.io" target="_blank" rel="noopener">@jordan.weatherby.io</a>. The live total in the TOTAL USERS card and the ticker is read from this account’s public feed.</li>
+                        <li><a href="https://web.archive.org/web/*/bsky-search.jazco.io/stats" target="_blank" rel="noopener">Wayback Machine</a> captures of Jaz’s counter. Gap fills: <a href="https://github.com/Krekeny/bluesky-stats" target="_blank" rel="noopener">Krekeny/bluesky-stats</a> (MIT License, Copyright (c) 2025 Krekeny) and <a href="https://github.com/elaval/bskyusers" target="_blank" rel="noopener">elaval/bskyusers</a>.</li>
+                        <li>PLC directory (<a href="https://plc.directory" target="_blank" rel="noopener">plc.directory</a>) account-creation rates, used only to shape the 2024 gaps between archived counts.</li>
+                        <li>Charts by <a href="https://www.chartjs.org/" target="_blank" rel="noopener">Chart.js</a> with chartjs-plugin-zoom and Hammer.js. Event labels on the migration-wave chips are editorial.</li>
+                    </ul>
+                </section>
+            </div>
+        </section>
+
+        <footer class="dashboard-footer">
+            <div class="footer-left">
+                <span class="footer-dot" aria-hidden="true"></span>
+                <span>Bluesky Network Pulse</span>
+                <span class="footer-sep" aria-hidden="true">•</span>
+                <a href="https://github.com/obsesivegamer/Bluesky-User-Trends" target="_blank" rel="noopener">Source on GitHub</a>
+                <span class="footer-sep" aria-hidden="true">•</span>
+                <a href="data/bluesky-daily.csv">Dataset (CSV)</a>
+            </div>
+            <div class="footer-right">
+                <p>Independent project, not affiliated with Bluesky Social PBC. Data: <a href="https://bsky.jazco.dev/stats" target="_blank" rel="noopener">Jaz’s Bluesky index</a> and the archives credited above. Updated by GitHub Actions. No analytics or cookies; your browser loads Chart.js and Hammer.js from jsDelivr, fonts from Google Fonts and the live user count from public.api.bsky.app.</p>
+            </div>
+        </footer>
+    </div>
+
+    <dialog id="guide-dialog" class="guide-dialog" aria-labelledby="guide-dialog-title">
+        <div class="guide-dialog-container">
+            <div class="guide-dialog-header">
+                <div class="guide-header-title-wrap">
+                    <span class="guide-header-tag">HELP &lt;GO&gt; // METHODOLOGY &amp; REFERENCE</span>
+                    <h2 id="guide-dialog-title">Terminal guide</h2>
+                </div>
+                <button type="button" class="guide-close-btn" id="close-guide-btn" data-close-guide aria-label="Close guide"><span aria-hidden="true">✕</span></button>
+            </div>
+
+            <div class="guide-dialog-body">
+                <section class="guide-section" aria-labelledby="g-keys">
+                    <h3 id="g-keys"><span class="guide-code" aria-hidden="true">KEY</span> Keyboard</h3>
+                    <div class="guide-table-wrap">
+                        <table class="guide-table">
+                            <tbody>
+                                <tr><td><kbd>1</kbd>–<kbd>8</kbd></td><td>Ranges 1W, 1M, 3M, 6M, YTD, 1Y, 2Y, ALL</td></tr>
+                                <tr><td><kbd>M</kbd></td><td>Toggle the 7-day moving average</td></tr>
+                                <tr><td><kbd>L</kbd></td><td>Toggle the logarithmic y-axis (USR, DAU, ACT, REC, TOT)</td></tr>
+                                <tr><td><kbd>C</kbd></td><td>Toggle the prior-period comparison</td></tr>
+                                <tr><td><kbd>?</kbd></td><td>Open or close this guide (<kbd>Esc</kbd> also closes it)</td></tr>
+                                <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>Home</kbd> <kbd>End</kbd></td><td>On a focused chart: step through days</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="guide-section-desc">The range and studies are saved in the address bar (for example <code>#r=1Y&amp;ma=1&amp;log=0&amp;cmp=0</code>), so a copied link opens the same view.</p>
+                </section>
+
+                <section class="guide-section" aria-labelledby="g-ranges">
+                    <h3 id="g-ranges"><span class="guide-code" aria-hidden="true">RNG</span> Ranges &amp; the prior period</h3>
+                    <p class="guide-section-desc">Every range ends on the latest complete UTC day and includes its baseline day (1W is 8 daily points; YTD starts at the Dec 31 close; a migration wave starts at the close of the day before it). <strong>COMPARE</strong> overlays a dashed ochre line for the prior period: the same number of calendar days, ending where the current range starts. Point <em>n</em> of the prior period lines up with point <em>n</em> of the current one.</p>
+                    <div class="guide-table-wrap">
+                        <table class="guide-table">
+                            <thead><tr><th scope="col">Range</th><th scope="col">Current window</th><th scope="col">Prior period</th></tr></thead>
+                            <tbody id="guide-ranges-body"></tbody>
+                        </table>
+                    </div>
+                    <p class="guide-section-desc">Card trend badges compare the 7-day average at the start of the range with the 7-day average at the end, so 1W reads week over week and 1Y year over year. With COMPARE on, cards also show the prior period’s average and how the current period differs.</p>
+                </section>
+
+                <section class="guide-section" aria-labelledby="g-hud">
+                    <h3 id="g-hud"><span class="guide-code" aria-hidden="true">HUD</span> Reading the chart readout</h3>
+                    <div class="guide-tooltip-demo" aria-hidden="true">
+                        <div class="hud demo visible">
+                            <div class="hud-title">TUE Nov 19, 2024</div>
+                            <div class="hud-row"><span class="hud-key" style="--key: var(--series-dau)"></span><span class="hud-label">DAU (lower bound)</span><span class="hud-value">2.92M</span><span class="hud-sub">Δ -204.7K · 7D 2.81M</span></div>
+                            <div class="hud-row"><span class="hud-key" style="--key: var(--series-posters)"></span><span class="hud-label">Posters</span><span class="hud-value">1.48M</span><span class="hud-sub">Δ +4.0K · 7D 1.34M</span></div>
+                            <div class="hud-row"><span class="hud-key dash" style="--key: var(--series-prior)"></span><span class="hud-label">Prior DAU</span><span class="hud-value">208.8K</span></div>
+                            <div class="hud-note">Prior period date: Nov 19, 2023</div>
+                        </div>
+                    </div>
+                    <ul class="guide-feature-list">
+                        <li><strong>Value</strong> for the day, <strong>Δ</strong> against the previous day and the <strong>7D</strong> average, for every series in the panel.</li>
+                        <li><strong><span aria-hidden="true">≈</span> Estimated</strong> marks interpolated user counts (hatched bars, dashed lines). <strong><span aria-hidden="true">⚠</span> Collection outage</strong> marks days Jaz’s indexer missed; they are drawn as shaded gaps, not zeros.</li>
+                        <li>Hovering one panel draws the same date’s hairline on every panel.</li>
+                    </ul>
+                </section>
+
+                <section class="guide-section" aria-labelledby="g-studies">
+                    <h3 id="g-studies"><span class="guide-code" aria-hidden="true">STU</span> Studies &amp; modes</h3>
+                    <ul class="guide-feature-list">
+                        <li><strong>7D MA</strong>: a trailing 7-calendar-day average. Outage days are skipped (a window needs at least 4 good days), so gaps never pull the average toward zero. With MA on, daily lines turn faint and the average is drawn solid.</li>
+                        <li><strong>LOG</strong>: a logarithmic y-axis for USR, DAU, ACT, REC and TOT, useful when likes (millions) share a panel with blocks (hundreds of thousands). Zero and negative values cannot be drawn on a log axis.</li>
+                        <li><strong>NEW/DAY · GROWTH %</strong>: user velocity as accounts per day or as a percentage of the previous day’s total.</li>
+                        <li><strong>Migration waves</strong>: one click filters every panel to a historical wave; the chip shows the new accounts in that window (from the close of the day before it starts), computed from the data. Click it again or <strong>✕ RESET</strong> to go back. Event labels are editorial.</li>
+                        <li><strong>Zoom</strong>: Ctrl + scroll or pinch to zoom, drag to pan, <strong>⟲</strong> to reset. PNG and CSV exports cover the visible window.</li>
+                    </ul>
+                </section>
+
+                <section class="guide-section" aria-labelledby="g-defs">
+                    <h3 id="g-defs"><span class="guide-code" aria-hidden="true">DEF</span> Definitions</h3>
+                    <ul class="guide-feature-list">
+                        <li><strong>Total users</strong>: accounts on Bluesky-operated PDS hosts (Jaz’s <code>listRepos</code> count), added when first seen active and never subtracted. Excludes self-hosted and third-party PDS accounts.</li>
+                        <li><strong>User velocity</strong>: new accounts per UTC day; <strong>velocity growth</strong> is the change in its 7-day average.</li>
+                        <li><strong>DAU (lower bound)</strong>: distinct accounts that liked, posted, followed or blocked that UTC day. Readers are invisible to the firehose, so true DAU is higher.</li>
+                        <li><strong>Posters</strong>: distinct accounts with at least one post that day, including replies and quotes.</li>
+                    </ul>
+                </section>
+
+                <section class="guide-section" aria-labelledby="g-data">
+                    <h3 id="g-data"><span class="guide-code" aria-hidden="true">SRC</span> Data &amp; status</h3>
+                    <ul class="guide-feature-list">
+                        <li>A GitHub Action reads Jaz’s index twice a day and commits the dataset; the page reads that file. <strong>ARCHIVE</strong> means you are seeing the committed snapshot.</li>
+                        <li><strong>LIVE</strong> means the browser read a newer user count from @hourlybskyusers.bsky.social. Between readings the total may tick at the 7-day pace and is then marked <strong>EST</strong>, never more than 3 hours past the last reading.</li>
+                        <li>Today’s partial UTC day is never shown. Sources and outage dates are listed under “Definitions &amp; caveats” on the page.</li>
+                    </ul>
+                </section>
+            </div>
+
+            <div class="guide-dialog-footer">
+                <span class="guide-shortcut-hint">Press <kbd>Esc</kbd> or click outside to close</span>
+                <button type="button" class="control-btn" id="guide-dismiss-btn" data-close-guide>CLOSE</button>
+            </div>
+        </div>
+    </dialog>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js" integrity="sha384-Cs3dgUx6+jDxxuqHvVH8Onpyj2LF1gKZurLDlhqzuJmUqVYMJ0THTWpxK5Z086Zm" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js" integrity="sha384-zPzbVRXfR492Sd5D+HydTYCxxgHAfgVO8KERbLlpeH5unsmbAEXrscGUUqLZG9BM" crossorigin="anonymous"></script>
+    <script src="lib/format.js?v=1"></script>
+    <script src="data/bluesky-data.js?v=202610081724"></script>
+    <script src="script.js?v=1"></script>
+</body>
+</html>

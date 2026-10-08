@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bluesky User Stats // fixture</title>
+  <script type="application/ld+json" id="jsonld">{"stale": true}</script>
+</head>
+<body>
+  <header>
+    <span class="meta">Data through <time data-prerender="last-day">Jan 1, 2020</time> · built <span data-prerender="generated">old</span></span>
+  </header>
+  <div class="ticker" aria-label="Market ticker">
+    <div class="ticker-track">
+      <!-- prerender:ticker -->
+      <span class="ticker-item">STALE</span>
+      <!-- /prerender:ticker -->
+    </div>
+  </div>
+  <section class="cards">
+    <article id="card-users"><span class="value" id="val-users" data-prerender="users-total">0</span><span data-prerender='users-total-compact'>0</span> at <span data-prerender="users-at">x</span></article>
+    <article id="card-velocity"><span class="value" data-prerender="velocity-7d" id="val-velocity">0</span> last day <span data-prerender=velocity-last>0</span></article>
+    <article id="card-dau"><span class="value" data-prerender="dau">0</span></article>
+    <article id="card-posters"><span class="value" data-prerender="posters">0</span></article>
+    <article id="card-ratio"><span class="value" data-prerender="poster-ratio">0</span> share <span data-prerender="dau-share">0</span> on <span data-prerender="activity-day">x</span></article>
+  </section>
+  <section class="index-strip">
+    <span data-prerender="index-posts">0</span><span data-prerender="index-likes">0</span><span data-prerender="index-follows">0</span>
+  </section>
+  <section class="peaks">
+    <span data-prerender="dau-peak">0</span> on <span data-prerender="dau-peak-date">x</span>;
+    <span data-prerender="posters-peak">0</span> on <span data-prerender="posters-peak-date">x</span>;
+    <span data-prerender="velocity-peak">0</span> on <span data-prerender="velocity-peak-date">x</span>;
+    <span data-prerender="dau"><b>has a child</b></span>
+    <span data-prerender="not-a-key">kept</span>
+  </section>
+  <table class="insights-data-table">
+    <tbody>
+      <!-- prerender:milestones -->
+      <tr><td>stale</td></tr>
+      <!-- /prerender:milestones -->
+    </tbody>
+  </table>
+  <div class="faq-accordion">
+    <details class="faq-item" open>
+      <summary class="faq-question"><span>How many users does Bluesky have?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+      <div class="faq-answer"><p>Jaz&#39;s index counts <strong data-prerender="users-total">0</strong> accounts as of <span data-prerender="last-day">x</span> &amp; growing.</p></div>
+    </details>
+    <details class="faq-item">
+      <summary class="faq-question"><span>How many people use Bluesky daily?</span><span class="faq-arrow">▼</span></summary>
+      <div class="faq-answer">
+        <p>At least <span data-prerender="dau">0</span> accounts were active,
+           and <span data-prerender="posters">0</span> posted.</p>
+      </div>
+    </details>
+    <details class="guide-only"><summary>Not a FAQ</summary><p>ignored</p></details>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <script src="lib/format.js"></script>
+  <script src="data/bluesky-data.js?v=STAMP"></script>
+  <script src="script.js?v=1"></script>
+</body>
+</html>

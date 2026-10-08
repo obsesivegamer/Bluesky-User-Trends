@@ -1,0 +1,64 @@
+name: Update Bluesky Data
+
+on:
+  schedule:
+    # 03:17 and 15:17 UTC. The 03:17 run lands after jazco has settled the previous UTC day
+    # (~99.9% final by 02:30 UTC); the 15:17 run picks up late revisions and keeps the
+    # user-count samples dense. Off the hour to avoid GitHub's top-of-hour cron backlog.
+    - cron: '17 3,15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Check out the branch head, not the commit that triggered the run: a run queued behind
+      # another (concurrency below) must start from that run's data commit, or its rebase conflicts.
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Fetch data and rebuild the archive
+        run: node updateData.js
+
+      # After the update, so the gate checks the code and the data about to be committed. A bad
+      # committed file can then never stop the next run from replacing it.
+      - name: Run tests
+        run: npm test
+
+      - name: Commit and push if anything changed
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data index.html sitemap.xml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: data update (automated)"
+          for attempt in 1 2; do
+            if git pull --rebase --autostash origin "$BRANCH" && git push origin "HEAD:$BRANCH"; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            echo "Push attempt $attempt failed."
+            if [ "$attempt" -eq 1 ]; then sleep 15; fi
+          done
+          echo "::error::Could not push the data update after 2 attempts."
+          exit 1
