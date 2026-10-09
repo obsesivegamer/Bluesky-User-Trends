@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import unicodedata
 import urllib.parse
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -48,6 +49,10 @@ FEED_GLOB = "**/xrpc/app.bsky.feed.getAuthorFeed*"
 RANGES = ["1W", "1M", "3M", "6M", "YTD", "1Y", "2Y", "ALL"]
 DEFAULT_RANGE = "1Y"
 CSV_HEADER = "date,users,users_estimated,users_source,new_users,dau,posters,likers,followers,blockers,posts,likes,follows,blocks,flags"
+SOCIAL_GLOB = "**/data/social.js*"
+DATA_GLOB = "**/data/bluesky-data.js*"
+AVATAR_GLOB = "**/cdn.bsky.app/**"
+SOCIAL_FIXTURE = REPO_ROOT / "test" / "fixtures" / "social-fixture.js"
 PINNED_LIBS = [
     "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js",
     "https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js",
@@ -172,6 +177,31 @@ def feed_body(value: int, created_at: datetime) -> str:
     return json.dumps({"feed": items, "cursor": "mock"})
 
 
+def avatar_svg(url: str) -> str:
+    hue = sum(ord(c) for c in url) % 360
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" fill="hsl({hue},45%,36%)"/>'
+            f'<circle cx="24" cy="19" r="9" fill="hsl({hue},40%,72%)"/><ellipse cx="24" cy="46" rx="16" ry="14" fill="hsl({hue},40%,72%)"/></svg>')
+
+
+def with_third_party(third_party: dict | None):
+    """A data/bluesky-data.js rewriter: every own-count row loses third_party, the newest complete one gets `third_party`."""
+    def patch(text: str) -> str:
+        i, j = text.index("{"), text.rindex("}")
+        data = json.loads(text[i:j + 1])
+        own = data.get("own_count") or {"source": "fixture", "rows": [], "net": []}
+        rows = own.get("rows") or [{"date": data["last_complete_day"], "finished_at": data["generated_at"], "complete": True,
+                                    "repos": 45_400_000, "active": 41_700_000, "deactivated": 0, "takendown": 0}]
+        for r in rows:
+            r.pop("third_party", None)
+        if third_party is not None:
+            rows[-1]["complete"] = True
+            rows[-1]["third_party"] = third_party
+        own["rows"] = rows
+        data["own_count"] = own
+        return text[:i] + json.dumps(data) + text[j + 1:]
+    return patch
+
+
 def iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
@@ -196,6 +226,8 @@ class Dashboard:
     def __init__(self, args):
         self.args = args
         self.tmp = Path(tempfile.mkdtemp(prefix="verify-dashboard-"))
+        self._social_cache: dict[str, str] = {}
+        self.social_now = iso(datetime.now(timezone.utc))
         self.server = None
         self.pw = self.browser = None
 
@@ -244,7 +276,10 @@ class Dashboard:
         base = self.base.split("#")[0]
         return base + (("#" + hash_.lstrip("#")) if hash_ else "")
 
-    def new_page(self, feed: str = "stale", width: int = 1440, height: int = 900, reduced_motion: str = "no-preference"):
+    def new_page(self, feed: str = "stale", width: int = 1440, height: int = 900, reduced_motion: str = "no-preference",
+                 social: str | None = None, data_patch=None):
+        """social: None (the real data/social.js, or an empty one while it doesn't exist yet), "clean" or "malicious"
+        (fixture), "missing" (HTTP 404) or "empty" (file loads, defines nothing). data_patch rewrites data/bluesky-data.js."""
         ctx = self.browser.new_context(viewport={"width": width, "height": height}, accept_downloads=True,
                                        reduced_motion=reduced_motion, color_scheme="dark")
         page = ctx.new_page()
@@ -280,7 +315,37 @@ class Dashboard:
                 route.continue_()
 
         page.route(FEED_GLOB, handle)
+        page.route(AVATAR_GLOB, lambda route: route.fulfill(status=200, content_type="image/svg+xml", body=avatar_svg(route.request.url)))
+
+        def handle_social(route):
+            if social in ("clean", "malicious", "partial", "gainersonly", "nomovers"):
+                route.fulfill(status=200, content_type="text/javascript", body=self.social_js(social))
+            elif social == "missing":
+                route.fulfill(status=404, content_type="text/plain", body="not found")
+            elif social == "empty":
+                route.fulfill(status=200, content_type="text/javascript", body="// no data yet\n")
+            elif not self.args.url and not (REPO_ROOT / "data" / "social.js").exists():
+                route.fulfill(status=200, content_type="text/javascript", body="// data/social.js is not built yet\n")
+            else:
+                route.continue_()
+
+        page.route(SOCIAL_GLOB, handle_social)
+        if data_patch:
+            def handle_data(route):
+                resp = route.fetch()
+                route.fulfill(response=resp, body=data_patch(resp.text()), content_type="text/javascript")
+            page.route(DATA_GLOB, handle_data)
         return page
+
+    def social_js(self, kind: str) -> str:
+        if kind not in self._social_cache:
+            out = subprocess.run(["node", str(SOCIAL_FIXTURE), kind, self.social_now], capture_output=True, text=True, check=True)
+            self._social_cache[kind] = out.stdout
+        return self._social_cache[kind]
+
+    def social_payload(self, kind: str) -> dict:
+        js = self.social_js(kind)
+        return json.loads(js.split("window.BLUESKY_SOCIAL = ", 1)[1].rsplit(";", 1)[0])
 
     @staticmethod
     def close(page):
@@ -590,8 +655,10 @@ def cmd_smoke(args, res: Results, dash: Dashboard):
     a11y = page.evaluate("""() => {
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         const loud = [];
+        // Account names, handles and post text come from other people and cannot be aria-hidden; only UI chrome is checked.
+        const userContent = '.acct-text, .post-text';
         for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-          if (/\\p{Extended_Pictographic}/u.test(n.textContent) && !n.parentElement.closest('[aria-hidden="true"], script, style')) {
+          if (/\\p{Extended_Pictographic}/u.test(n.textContent) && !n.parentElement.closest('[aria-hidden="true"], script, style, ' + userContent)) {
             loud.push(n.textContent.trim().slice(0, 40));
           }
         }
@@ -600,7 +667,7 @@ def cmd_smoke(args, res: Results, dash: Dashboard):
           .filter(b => !['true', 'false'].includes(b.getAttribute('aria-pressed'))).map(b => b.textContent.trim());
         return { loud, tickerAnim: track ? getComputedStyle(track).animationName : 'none', unpressed };
       }""")
-    res.check(s, "emoji are hidden from screen readers (aria-hidden)", not a11y["loud"], json.dumps(a11y["loud"][:5], ensure_ascii=False))
+    res.check(s, "emoji in UI chrome are hidden from screen readers (user-generated names and post text excluded)", not a11y["loud"], json.dumps(a11y["loud"][:5], ensure_ascii=False))
     res.check(s, "ticker is static under prefers-reduced-motion", a11y["tickerAnim"] == "none", a11y["tickerAnim"])
     res.check(s, "toggle buttons expose aria-pressed", not a11y["unpressed"], json.dumps(a11y["unpressed"][:5]))
 
@@ -1042,9 +1109,441 @@ def cmd_live(args, res: Results, dash: Dashboard):
         dash.close(p)
 
 
+# --- social boards (LDR / PST / DEC) -------------------------------------------------------------------
+
+# (board, window, direction, data key)
+SOCIAL_BOARDS = [
+    ("blocked", "24h", None, "blocked_24h"), ("blocked", "7d", None, "blocked_7d"), ("blocked", "all", None, "blocked_all"),
+    ("growing", "24h", None, "growing_24h"), ("growing", "7d", None, "growing_7d"),
+    ("followed", None, None, "followed"),
+    ("movers", "24h", "gain", "gainers_24h"), ("movers", "24h", "loss", "losers_24h"),
+    ("movers", "7d", "gain", "gainers_7d"), ("movers", "7d", "loss", "losers_7d"),
+    ("controversial", "24h", None, "controversial_24h"), ("controversial", "7d", None, "controversial_7d"),
+]
+SOCIAL_WINDOWS = {"blocked": ["24h", "7d", "all"], "growing": ["24h", "7d"], "followed": [], "movers": ["24h", "7d"], "controversial": ["24h", "7d"]}
+SOCIAL_CAVEAT = {
+    "blocked_24h": r"gross", "blocked_7d": r"gross", "blocked_all": r"since early 2025.*Constellation",
+    "growing_24h": r"gross", "growing_7d": r"gross", "followed": r"exact", "gainers_24h": r"net change.*snapshots",
+    "controversial_24h": r"100 blocks",
+}
+
+ROWS_JS = """() => [...document.querySelectorAll('#ldr-body tr')].map(tr => {
+  const cell = c => (tr.querySelector(c) || {});
+  const a = tr.querySelector('a.acct');
+  const img = tr.querySelector('img.avatar');
+  const vis = c => { const el = tr.querySelector(c); return !!el && getComputedStyle(el).display !== 'none'; };
+  return {
+    handle: tr.dataset.handle, rank: (cell('.col-rank').textContent || '').trim(),
+    href: a ? a.getAttribute('href') : null, target: a ? a.getAttribute('target') : null, rel: a ? a.getAttribute('rel') : null,
+    name: (cell('.acct-name').textContent || '').trim(), shownHandle: (cell('.acct-handle').textContent || '').trim(),
+    metric: (cell('.metric-main').textContent || '').trim(), sub: (cell('.metric-sub').textContent || '').trim(),
+    tone: cell('.col-metric').className || '',
+    cells: [...tr.querySelectorAll('td.col-opt')].map(td => td.textContent.trim()),
+    titles: [...tr.querySelectorAll('td.col-opt')].map(td => td.getAttribute('title') || ''),
+    pdsTag: (cell('.pds-tag').textContent || '').trim(), pdsClass: cell('.pds-tag').className || '',
+    img: img ? {src: img.getAttribute('src'), w: img.getAttribute('width'), h: img.getAttribute('height'), loading: img.getAttribute('loading'),
+                ref: img.getAttribute('referrerpolicy'), alt: img.getAttribute('alt'), box: img.getBoundingClientRect().width} : null,
+    blank: !!tr.querySelector('.avatar-blank'),
+    optVisible: vis('td.col-opt'), metricVisible: vis('.col-metric'), acctVisible: vis('.col-acct'),
+  };
+})"""
+
+
+UNSAFE_DOM_JS = """sel => {
+  const root = document.querySelector(sel);
+  const bad = [...root.querySelectorAll('script, svg, iframe, object, embed, style, link, b[class], img:not(.avatar)')]
+      .filter(e => !(e.tagName === 'B' && e.closest('.post-stats'))).map(e => e.tagName);
+  for (const el of root.querySelectorAll('*')) {
+    for (const a of el.attributes) {
+      if (/^on/i.test(a.name)) bad.push('attr ' + a.name);
+      if (/^(href|src)$/i.test(a.name) && /^\\s*(javascript|data|http):/i.test(a.value)) bad.push(a.name + '=' + a.value.slice(0, 30));
+    }
+  }
+  return bad;
+}"""
+
+
+def label_vals(labels) -> list[str]:
+    """Independent label normaliser: NFKC, zero-width and control characters dropped, trimmed, lowercase."""
+    out = []
+    for l in labels or []:
+        v = l if isinstance(l, str) else (l or {}).get("val", "")
+        v = unicodedata.normalize("NFKC", v)
+        v = "".join(c for c in v if not (ord(c) < 32 or 0x7f <= ord(c) <= 0x9f or 0x200b <= ord(c) <= 0x200f or 0x202a <= ord(c) <= 0x202e or 0x2066 <= ord(c) <= 0x2069 or ord(c) == 0xfeff))
+        v = v.strip().lower()
+        if v:
+            out.append(v)
+    return out
+
+
+def social_expected(payload: dict, key: str) -> list[str]:
+    """Independent oracle: re-derive the eligible, ranked handles of a board straight from the raw payload."""
+    acc = payload["accounts"]
+    out = []
+    for row in payload["boards"].get(key, []):
+        a = acc.get(row["did"])
+        if not a or a["followers"] < 10000 or a["handle"].endswith(".invalid"):
+            continue
+        if any(l.startswith("!") for l in label_vals(a.get("labels"))) or a["handle"] in [h for _, h in out]:
+            continue
+        if key.startswith("controversial_") and not (row.get("blocks", 0) >= 100 and row.get("follows", -1) >= 0):
+            continue
+        out.append((row["value"], a["handle"]))
+    out.sort(key=lambda t: t[0], reverse=not key.startswith("losers"))
+    return [h for _, h in out[:25]]
+
+
+def social_forbidden(payload: dict) -> list[str]:
+    """Names and handles of the accounts in the fixture that must never be rendered."""
+    labelled = lambda a: any(l.startswith("!") for l in label_vals(a.get("labels")))
+    bad = [a for a in payload["accounts"].values() if a["followers"] < 10000 or labelled(a) or a["handle"].endswith(".invalid")
+           or "porn" in label_vals(a.get("labels"))]
+    return [t for a in bad for t in (a["display_name"], a["handle"].split(".")[0])]
+
+
+def shot_el(dash: Dashboard, page, selector: str, name: str):
+    out = Path(dash.args.out) if dash.args.out else ARTIFACTS
+    out.mkdir(parents=True, exist_ok=True)
+    loc = page.locator(selector)
+    loc.scroll_into_view_if_needed()
+    page.add_style_tag(content=".terminal-command-bar { visibility: hidden !important; }")
+    page.wait_for_timeout(450)
+    path = out / f"{name}.png"
+    loc.screenshot(path=str(path))
+    print(f"  screenshot: {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}")
+
+
+def pick_board(page, board: str, win: str | None, direction: str | None):
+    page.locator(f'.ldr-mode-btn[data-board="{board}"]').click()
+    if win:
+        page.locator(f'.ldr-win-btn[data-win="{win}"]').click()
+    if direction:
+        page.locator(f'.ldr-dir-btn[data-dir="{direction}"]').click()
+
+
+def no_scroll(page) -> tuple[bool, str]:
+    m = page.evaluate("""() => ({doc: document.documentElement.scrollWidth, win: window.innerWidth, body: document.body.scrollWidth,
+        wrap: (document.querySelector('#ldr-table-wrap') || {}).scrollWidth || 0, wrapBox: (document.querySelector('#ldr-table-wrap') || {clientWidth: 0}).clientWidth})""")
+    ok = m["doc"] <= m["win"] and m["body"] <= m["win"] and m["wrap"] <= m["wrapBox"] + 1
+    return ok, str(m)
+
+
+def cmd_social(args, res: Results, dash: Dashboard):
+    s = "social"
+    print("== social")
+    payload = dash.social_payload("clean")
+    forbidden = social_forbidden(payload)
+    res.check(s, "fixture contains accounts that must stay hidden", len(forbidden) >= 8, f"{forbidden}")
+    ignore_missing = lambda errs: [e for e in errs if "social.js" not in e and "Failed to load resource" not in e]
+
+    # ---- every board, window and direction, desktop
+    page = dash.new_page(social="clean", reduced_motion="reduce")
+    dash.open(page)
+    page.wait_for_selector("#ldr-body tr")
+    res.check(s, "LDR, PST and DEC panels are on the page", all(page.locator(f"#section-{x}").count() == 1 for x in ("ldr", "pst", "dec")))
+    res.check(s, "panel headers use the function-key style", [t.strip() for t in page.locator("#section-ldr .fn-key, #section-pst .fn-key, #section-dec .fn-key").all_text_contents()] == ["LDR<GO>", "PST<GO>", "DEC<GO>"]
+              or [norm(t) for t in page.locator("#section-ldr .fn-key, #section-pst .fn-key, #section-dec .fn-key").all_text_contents()] == ["LDRGO", "PSTGO", "DECGO"])
+    pressed = page.locator(".ldr-mode-btn[aria-pressed='true']").all_text_contents()
+    res.check(s, "default board is MOST BLOCKED / 24H", pressed == ["MOST BLOCKED"] and page.locator(".ldr-win-btn[aria-pressed='true']").get_attribute("data-win") == "24h", str(pressed))
+    res.check(s, "mode pill labels", page.locator(".ldr-mode-btn").all_text_contents() == ["MOST BLOCKED", "FASTEST GROWING", "MOST FOLLOWED", "GAINERS·LOSERS", "CONTROVERSIAL"])
+    shot_el(dash, page, "#section-ldr", "social-ldr-blocked-24h")
+
+    for board, win, direction, key in SOCIAL_BOARDS:
+        label = f"{board}/{win or '-'}{'/' + direction if direction else ''}"
+        pick_board(page, board, win, direction)
+        page.wait_for_timeout(60)
+        rows = page.evaluate(ROWS_JS)
+        want = social_expected(payload, key)
+        got = [r["handle"] for r in rows]
+        res.check(s, f"{label}: rows are the eligible fixture accounts in rank order", got == want, f"got {got[:4]}... want {want[:4]}...")
+        res.check(s, f"{label}: at most 25 rows, ranks 1..n", 0 < len(rows) <= 25 and [r["rank"] for r in rows] == [str(i + 1) for i in range(len(rows))], f"{len(rows)} rows")
+        text = page.locator("#section-ldr").inner_text()
+        leaks = [t for t in forbidden if t in text]
+        res.check(s, f"{label}: no ineligible or labelled account is named", not leaks, str(leaks))
+        modes = page.locator(".ldr-mode-btn[aria-pressed='true']").all_text_contents()
+        res.check(s, f"{label}: exactly one mode pill is pressed", len(modes) == 1 and page.locator(f'.ldr-mode-btn[data-board="{board}"]').get_attribute("aria-pressed") == "true")
+        visible_wins = [b.get_attribute("data-win") for b in page.locator(".ldr-win-btn").all() if b.is_visible()]
+        res.check(s, f"{label}: window pill offers {SOCIAL_WINDOWS[board] or 'nothing'}", visible_wins == SOCIAL_WINDOWS[board], str(visible_wins))
+        res.check(s, f"{label}: direction pill only for GAINERS·LOSERS", page.locator("#ldr-dir-pill").is_visible() == (board == "movers"))
+        if win:
+            res.check(s, f"{label}: window pill is pressed", page.locator(f'.ldr-win-btn[data-win="{win}"]').get_attribute("aria-pressed") == "true")
+        head = norm(page.locator("#ldr-metric-head").inner_text())
+        res.check(s, f"{label}: metric header names the board", bool(head) and (win is None or win.upper() in head.upper()), head)
+        first = rows[0]
+        if board == "movers":
+            res.check(s, f"{label}: {'gainers green +' if direction == 'gain' else 'losers red -'}",
+                      all((r["metric"].startswith("+") and "up" in r["tone"]) if direction == "gain" else (r["metric"].startswith("-") and "down" in r["tone"]) for r in rows), first["metric"])
+            color = page.evaluate("() => getComputedStyle(document.querySelector('#ldr-body td.col-metric')).color")
+            res.check(s, f"{label}: metric colour is {'green' if direction == 'gain' else 'red'}", color == ("rgb(0, 210, 106)" if direction == "gain" else "rgb(248, 63, 85)"), color)
+        elif board == "controversial":
+            flagged = [r for r in rows if r["metric"].startswith("≥")]
+            exact = [r for r in rows if not r["metric"].startswith("≥")]
+            res.check(s, f"{label}: ratio plus blocks/follows", all(re.fullmatch(r"\d+\.\d\d×", r["metric"]) and re.fullmatch(r"[\d,]+ blk / [\d,]+ fol", r["sub"]) for r in exact), f"{first['metric']} {first['sub']}")
+            res.check(s, f"{label}: a row below the follow-list cut reads ≥ratio and ≤follows", bool(flagged) and all(re.fullmatch(r"≥\d+\.\d×", r["metric"]) and re.fullmatch(r"[\d,]+ blk / ≤[\d,]+ fol", r["sub"]) for r in flagged), str([(r["metric"], r["sub"]) for r in flagged][:2]))
+            stored = {a["handle"]: row["value"] for row in payload["boards"][key] for a in [payload["accounts"].get(row["did"])] if a}
+            res.check(s, f"{label}: a ≥ratio never exceeds the stored lower bound", all(float(r["metric"][1:-1]) <= stored[r["handle"]] + 1e-9 for r in flagged), str([(r["metric"], stored.get(r["handle"])) for r in flagged][:3]))
+        else:
+            res.check(s, f"{label}: integer metric", all(re.fullmatch(r"[\d,]+", r["metric"]) for r in rows), first["metric"])
+        if key in SOCIAL_CAVEAT:
+            caveats = page.locator("#ldr-caveats").inner_text()
+            res.check(s, f"{label}: caveat shown", bool(re.search(SOCIAL_CAVEAT[key], caveats, re.I | re.S)), caveats[:160])
+        guard = page.locator("#section-ldr .social-guard").inner_text()
+        res.check(s, f"{label}: guardrail statement shown", "10,000 followers" in guard and "opt-out or moderation labels" in guard)
+
+    # ---- row contents and links (back on MOST BLOCKED 24H)
+    pick_board(page, "blocked", "24h", None)
+    rows = page.evaluate(ROWS_JS)
+    res.check(s, "rows link to bsky.app profiles in a new tab", all(r["href"] == f"https://bsky.app/profile/{r['handle']}" and r["target"] == "_blank" and "noopener" in (r["rel"] or "") for r in rows))
+    res.check(s, "display name and @handle are shown", all(r["name"] and r["shownHandle"] == "@" + r["handle"] for r in rows))
+    imgs = [r["img"] for r in rows if r["img"]]
+    res.check(s, "avatars: https, 24px, lazy, no-referrer, empty alt", imgs and all(i["src"].startswith("https://") and i["w"] == "24" and i["h"] == "24" and i["loading"] == "lazy"
+              and i["ref"] == "no-referrer" and i["alt"] == "" and round(i["box"]) == 24 for i in imgs), str(imgs[:1]))
+    pick_board(page, "followed", None, None)
+    rows = page.evaluate(ROWS_JS)
+    res.check(s, "an account without an avatar gets a placeholder", any(r["blank"] and r["img"] is None for r in rows))
+    cells = [r["cells"] for r in rows]
+    res.check(s, "columns: followers, posts, posts/month, last post, age, PDS", all(len(c) == 6 for c in cells) and all(c[0] and c[1] and c[2] for c in cells))
+    res.check(s, "followed board is ranked by followers", [int(r["metric"].replace(",", "")) for r in rows] == sorted((int(r["metric"].replace(",", "")) for r in rows), reverse=True))
+    res.check(s, "posts this month shows 1,000+ when capped", any(c[2] == "1,000+" for c in cells), str([c[2] for c in cells][:8]))
+    res.check(s, "last posted is relative with an absolute UTC title", any(re.fullmatch(r"(just now|\d+[mhd] ago|\d+mo ago|\d+y ago)", c[3]) for c in cells)
+              and all(re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d UTC", t[3]) for t, c in zip((r["titles"] for r in rows), cells) if c[3] != "—"))
+    res.check(s, "an account that never posted shows a dash", any(c[3] == "—" for c in cells))
+    res.check(s, "account age is shown", all(re.fullmatch(r"(\d+d|\d+mo|\d+y( \d+mo)?)", c[4]) for c in cells), str([c[4] for c in cells][:5]))
+    tags = {r["pdsTag"] for r in rows}
+    res.check(s, "PDS host is a bare hostname, tagged Bluesky-hosted or third-party", tags >= {"BSKY", "3RD PARTY", "BRIDGY"} and all(re.fullmatch(r"[a-z0-9.-]+", c[5].split(" ")[0]) for c in cells), str(tags))
+
+    # ---- posts
+    page.locator("#section-pst").scroll_into_view_if_needed()
+    cards = page.evaluate("""() => [...document.querySelectorAll('#pst-list .post-card')].map(li => ({
+        text: li.querySelector('.post-text').textContent, hrefs: [...li.querySelectorAll('a')].map(a => a.getAttribute('href')),
+        rels: [...li.querySelectorAll('a')].map(a => a.getAttribute('rel')), stats: li.querySelector('.post-stats').textContent.replace(/\\s+/g, ' ').trim(),
+        time: li.querySelector('.post-time').textContent, timeTitle: li.querySelector('.post-time').getAttribute('title') || ''}))""")
+    res.check(s, "PST shows the top 10 posts", len(cards) == 10, str(len(cards)))
+    res.check(s, "each post links to bsky.app and shows likes, reposts, quotes, replies and a time",
+              all(any(re.fullmatch(r"https://bsky\.app/profile/[a-z0-9.-]+/post/\w+", h or "") for h in c["hrefs"]) and all("noopener" in (r or "") for r in c["rels"])
+                  and all(w in c["stats"] for w in ("likes", "reposts", "quotes", "replies")) and re.fullmatch(r"(just now|\d+[mhd] ago)", c["time"]) and c["timeTitle"].endswith(" UTC") for c in cards))
+    allhref = " ".join(h for c in cards for h in c["hrefs"])
+    res.check(s, "posts by ineligible authors and graphic-labelled posts are not shown", not any(x in allhref for x in ("privateperson", "adultauthor", "rowanreed.studio", "smallfry")), allhref[:120])
+    def compact(t):
+        return float(t[:-1].replace(",", "")) * {"K": 1e3, "M": 1e6}[t[-1]] if t[-1] in "KM" else float(t.replace(",", ""))
+    likes = [compact(c["stats"].split(" likes")[0].split()[-1]) for c in cards]
+    res.check(s, "posts are ordered by likes", all(a >= b for a, b in zip(likes, likes[1:])), str(likes))
+    res.check(s, "shouted or padded labels, another day and a mismatched uri never reach PST (top card is the 48K post)", max(likes) < 52000, str(likes[:3]))
+    texts = [c["text"] for c in cards]
+    res.check(s, "text-free posts stay with an [image] or [quote] placeholder", "[image]" in texts and "[quote]" in texts, str(texts))
+    res.check(s, "PST states its guardrails", "adult" in page.locator("#section-pst .social-guard").inner_text().lower())
+    res.check(s, "PST complete day: says 'latest complete UTC day', no partial-day caveat",
+              "latest complete UTC day" in page.locator("#pst-subtitle").inner_text() and not page.locator("#pst-caveats").is_visible())
+    shot_el(dash, page, "#section-pst", "social-pst")
+    res.check(s, "no console errors", not page.console_errors, " | ".join(page.console_errors)[:400])
+    dash.close(page)
+
+    page = dash.new_page(social="partial")
+    dash.open(page)
+    page.wait_for_selector("#pst-list .post-card")
+    sub = norm(page.locator("#pst-subtitle").inner_text())
+    res.check(s, "PST partial day: says 'latest UTC day' and shows the partly-collected caveat",
+              "the latest UTC day" in sub and "complete" not in sub and page.locator("#pst-caveats").is_visible()
+              and "only partly collected" in page.locator("#pst-caveats").inner_text())
+    shot_el(dash, page, "#section-pst", "social-pst-partial")
+    dash.close(page)
+
+    # ---- keyboard + guide + FAQ
+    page = dash.new_page(social="clean")
+    dash.open(page)
+    btn = page.locator('.ldr-mode-btn[data-board="growing"]')
+    btn.focus()
+    res.check(s, "mode pills are real buttons that take keyboard focus", btn.evaluate("el => el.tagName === 'BUTTON' && document.activeElement === el"))
+    page.keyboard.press("Enter")
+    res.check(s, "Enter on a pill switches the board", btn.get_attribute("aria-pressed") == "true" and page.locator(".ldr-mode-btn[aria-pressed='true']").count() == 1)
+    outline = btn.evaluate("el => { const c = getComputedStyle(el); return [c.outlineStyle, c.outlineWidth, el.matches(':focus-visible')]; }")
+    res.check(s, "focused pill shows a focus ring", outline[0] != "none" and outline[1] != "0px", str(outline))
+    page.keyboard.press("Tab")
+    page.keyboard.press("Space")
+    res.check(s, "Tab then Space moves on to the next pill", page.locator(".ldr-mode-btn[aria-pressed='true']").get_attribute("data-board") == "followed")
+    page.locator("#open-guide-btn").click()
+    page.wait_for_timeout(250)
+    guide = norm(page.locator("#guide-dialog").inner_text())
+    for needle, why in ((r"LDR", "LDR"), (r"PST", "PST"), (r"DEC", "DEC"), (r"Jetstream", "Jetstream"), (r"Constellation", "Constellation"), (r"AppView", "AppView"),
+                        (r"10,000 followers", "follower guardrail"), (r"opt-out", "opt-out guardrail"), (r"gross", "gross counts")):
+        res.check(s, f"guide covers {why}", bool(re.search(needle, guide)))
+    page.keyboard.press("Escape")
+    faq = norm(page.locator(".insights-faq-wrap").text_content() + page.locator("#sources-heading + ul").text_content())
+    res.check(s, "FAQ and sources explain the data and guardrails", all(w in faq for w in ("Jetstream", "Constellation", "AppView", "listRepos", "10,000 followers")))
+    ld = page.evaluate("() => JSON.parse(document.getElementById('jsonld').textContent)")
+    faq_names = [q["name"] for g in ld["@graph"] if g["@type"] == "FAQPage" for q in g["mainEntity"]]
+    res.check(s, "JSON-LD FAQ includes the leaderboard question", any("leaderboards" in n.lower() for n in faq_names))
+    res.check(s, "no console errors (keyboard)", not page.console_errors, " | ".join(page.console_errors)[:400])
+    dash.close(page)
+
+    # ---- hostile strings
+    page = dash.new_page(social="malicious")
+    dash.open(page)
+    page.wait_for_selector("#ldr-body tr")
+    seen_text = ""
+    problems = []
+    for board, win, direction, key in SOCIAL_BOARDS:
+        pick_board(page, board, win, direction)
+        seen_text += page.locator("#section-ldr").inner_text()
+        injected = page.evaluate(UNSAFE_DOM_JS, "#section-ldr")
+        if injected:
+            problems.append(f"{key}: {injected}")
+        bad_links = page.evaluate("() => [...document.querySelectorAll('#section-ldr a[href]')].map(a => a.getAttribute('href')).filter(h => !h.startsWith('https://bsky.app/profile/'))")
+        bad_img = page.evaluate("() => [...document.querySelectorAll('#section-ldr img')].map(i => i.getAttribute('src')).filter(u => !u.startsWith('https://cdn.bsky.app/'))")
+        extra = page.evaluate("() => [...document.querySelectorAll('#ldr-body *')].map(e => e.tagName).filter(t => !['TR','TD','A','IMG','SPAN'].includes(t))")
+        if bad_links or bad_img or extra:
+            problems.append(f"{key}: links={bad_links} imgs={bad_img} tags={extra}")
+    res.check(s, "hostile names, avatars and hosts are escaped on every board", not problems, "; ".join(problems)[:400])
+    res.check(s, "a hostile display name shows as literal text", '<img src=x onerror="window.__pwned=1">Evil Name' in seen_text)
+    res.check(s, "an account with an invalid handle is not rendered", 'x"><b>' not in seen_text and "bad</b>" not in seen_text)
+    res.check(s, "bidi overrides and control characters are removed", "\u202e" not in seen_text and "\x00" not in seen_text)
+    page.locator("#section-pst").scroll_into_view_if_needed()
+    pst_text = page.locator("#section-pst").inner_text()
+    res.check(s, "hostile post text is escaped", not page.evaluate(UNSAFE_DOM_JS, "#section-pst") and '<script>window.__pwned=1</script>' in pst_text)
+    long_text = page.evaluate("() => [...document.querySelectorAll('#pst-list .post-text')].map(e => e.textContent.length)")
+    res.check(s, "post text is cut at 280 characters", long_text and max(long_text) <= 280 and 280 in long_text, str(long_text))
+    res.check(s, "injected script never ran", page.evaluate("() => window.__pwned === undefined"))
+    res.check(s, "no console errors (hostile)", not page.console_errors, " | ".join(page.console_errors)[:400])
+    dash.close(page)
+
+    # ---- missing and empty file
+    for mode in ("missing", "empty"):
+        page = dash.new_page(social=mode)
+        dash.open(page)
+        errs = ignore_missing(page.console_errors) if mode == "missing" else page.console_errors
+        res.check(s, f"{mode} data/social.js: no page errors", not errs, " | ".join(errs)[:300])
+        res.check(s, f"{mode} data/social.js: LDR and PST show the collecting state",
+                  "first data after the next daily run" in page.locator("#ldr-empty").inner_text() and page.locator("#ldr-empty").is_visible()
+                  and not page.locator("#ldr-table-wrap").is_visible() and page.locator("#pst-empty").is_visible() and not page.locator("#pst-list").is_visible())
+        res.check(s, f"{mode} data/social.js: the rest of the dashboard still works", len(dash.charts(page)) >= 6 and page.locator("#kpi-users-value").inner_text() not in ("", "—"))
+        page.locator('.ldr-mode-btn[data-board="movers"]').click()
+        res.check(s, f"{mode} data/social.js: pills still switch", page.locator('.ldr-mode-btn[data-board="movers"]').get_attribute("aria-pressed") == "true" and page.locator("#ldr-dir-pill").is_visible())
+        if mode == "missing":
+            shot_el(dash, page, "#section-ldr", "social-ldr-collecting")
+        dash.close(page)
+
+    # ---- the "needs two snapshots" hint only when no mover board has data
+    for mode, want_hint in (("clean", False), ("gainersonly", False), ("nomovers", True)):
+        page = dash.new_page(social=mode)
+        dash.open(page)
+        page.wait_for_selector("#ldr-body tr, #ldr-empty:not([hidden])")
+        if mode == "gainersonly":
+            pick_board(page, "movers", "24h", "loss")
+            empty = norm(page.locator("#ldr-empty").inner_text())
+            res.check(s, "an empty losers board beside a full gainers board does not claim snapshots are missing", page.locator("#ldr-empty").is_visible() and "snapshots" not in empty and "first data" in empty, empty)
+            pick_board(page, "movers", "24h", "gain")
+            res.check(s, "the gainers board of the same file is full", page.locator("#ldr-body tr").count() > 0)
+        elif mode == "nomovers":
+            pick_board(page, "movers", "24h", "gain")
+            empty = norm(page.locator("#ldr-empty").inner_text())
+            res.check(s, "with no mover data at all the empty line explains the two-snapshot wait", "need two daily snapshots" in empty, empty)
+        dash.close(page)
+
+    # ---- decentralization meter
+    active = None
+    tp = {"hosts": 240, "hosts_ok": 236, "hosts_failed": 4, "repos": 2_050_000, "active": 1_800_000, "bridgy_active": 300_000}
+    page = dash.new_page(social="clean", data_patch=with_third_party(tp))
+    dash.open(page)
+    rows_own = page.evaluate("() => window.BLUESKY_DATA.own_count.rows")
+    active = rows_own[-1]["active"]
+    share = tp["active"] / (active + tp["active"])
+    big = norm(page.locator(".dec-big").inner_text())
+    res.check(s, "DEC shows third_party.active / (active + third_party.active)", big == f"{share * 100:.1f}%", f"{big} vs {share * 100:.2f}%")
+    label = page.locator(".dec-bar").get_attribute("aria-label") or ""
+    bsky_pct, bridgy_pct = active / (active + tp["active"]), tp["bridgy_active"] / (active + tp["active"])
+    indep_pct = 1 - bsky_pct - bridgy_pct
+    res.check(s, "DEC segmented bar labels Bluesky-hosted / independent / Bridgy",
+              f"Bluesky-hosted {bsky_pct * 100:.1f}%" in label and f"independent PDS {indep_pct * 100:.1f}%" in label and "Bridgy Fed" in label, label)
+    widths = page.evaluate("() => [...document.querySelectorAll('.dec-bar .seg')].map(e => e.getBoundingClientRect().width)")
+    bar = page.evaluate("() => document.querySelector('.dec-bar').getBoundingClientRect().width")
+    res.check(s, "DEC has three visible segments that fill the bar", len(widths) == 3 and all(w >= 2.5 for w in widths) and abs(sum(widths) - bar) < 20, f"{widths} in {bar}")
+    legend = norm(page.locator(".dec-legend").inner_text())
+    res.check(s, "DEC legend lists the counts", f"{active:,}" in legend and f"{tp['active'] - tp['bridgy_active']:,}" in legend and f"{tp['bridgy_active']:,}" in legend, legend[:200])
+    foot = norm(page.locator(".dec-foot").inner_text())
+    res.check(s, "DEC shows host totals and the failed-host caveat", "236 of 240 non-Bluesky hosts answered" in foot and "4 failed" in foot and "lower bound" in foot, foot)
+    res.check(s, "DEC empty message is hidden when there is data", not page.locator("#dec-empty").is_visible())
+    shot_el(dash, page, "#section-dec", "social-dec")
+    res.check(s, "no console errors (DEC)", not page.console_errors, " | ".join(page.console_errors)[:300])
+    dash.close(page)
+
+    page = dash.new_page(social="clean", data_patch=with_third_party(None))
+    dash.open(page)
+    res.check(s, "DEC without third_party shows the collecting state", page.locator("#dec-empty").is_visible() and not page.locator("#dec-body").is_visible()
+              and "first data after the next daily run" in page.locator("#dec-empty").inner_text())
+    res.check(s, "no console errors (DEC absent)", not page.console_errors, " | ".join(page.console_errors)[:300])
+    dash.close(page)
+
+    # ---- phones and tablets: nothing scrolls sideways, essentials stay
+    page = dash.new_page(social="clean", width=375, height=800)
+    dash.open(page)
+    page.wait_for_selector("#ldr-body tr")
+    ok, detail = no_scroll(page)
+    res.check(s, "375px: no horizontal page scroll (default board)", ok, detail)
+    info = page.evaluate(ROWS_JS)[0]
+    res.check(s, "375px: rank, account and metric stay; the other columns collapse", info["metricVisible"] and info["acctVisible"] and not info["optVisible"])
+    heads = page.evaluate("() => [...document.querySelectorAll('#section-ldr thead th')].filter(th => getComputedStyle(th).display !== 'none').map(th => th.textContent.trim())")
+    res.check(s, "375px: only # / Account / metric headers remain", len(heads) == 3 and heads[0] == "#" and heads[1] == "Account", str(heads))
+    bad_boards = []
+    for board, win, direction, key in SOCIAL_BOARDS:
+        pick_board(page, board, win, direction)
+        ok, detail = no_scroll(page)
+        if not ok:
+            bad_boards.append(f"{key}: {detail}")
+    res.check(s, "375px: no horizontal scroll on any board", not bad_boards, "; ".join(bad_boards)[:300])
+    pick_board(page, "controversial", "7d", None)
+    shot_el(dash, page, "#section-ldr", "social-ldr-mobile-controversial")
+    pick_board(page, "movers", "24h", "loss")
+    shot_el(dash, page, "#section-ldr", "social-ldr-mobile-losers")
+    ok, detail = no_scroll(page)
+    for sel in ("#section-pst", "#section-dec"):
+        page.locator(sel).scroll_into_view_if_needed()
+    ok2, detail2 = no_scroll(page)
+    res.check(s, "375px: PST and DEC fit the screen", ok and ok2, detail2)
+    shot_el(dash, page, "#section-pst", "social-pst-mobile")
+    res.check(s, "no console errors (375px)", not page.console_errors, " | ".join(page.console_errors)[:300])
+    dash.close(page)
+
+    for width in (600, 601, 700, 768, 821, 1024):
+        page = dash.new_page(social="clean", width=width, height=900)
+        dash.open(page)
+        page.wait_for_selector("#ldr-body tr")
+        ok, detail = no_scroll(page)
+        res.check(s, f"{width}px: no horizontal page scroll", ok, detail)
+        bad_boards = []
+        for board, win, direction, key in SOCIAL_BOARDS:
+            pick_board(page, board, win, direction)
+            ok, detail = no_scroll(page)
+            if not ok:
+                bad_boards.append(f"{key}: {detail}")
+        res.check(s, f"{width}px: the table region fits on every board", not bad_boards, "; ".join(bad_boards)[:400])
+        pick_board(page, "blocked", "24h", None)
+        if width == 768:
+            shot_el(dash, page, "#section-ldr", "social-ldr-768")
+        dash.close(page)
+
+    # ---- the other suites' view of the page: whatever data/social.js is on disk, nothing errors
+    page = dash.new_page()
+    dash.open(page)
+    res.check(s, "default load (real or absent data/social.js): no console errors", not page.console_errors, " | ".join(page.console_errors)[:300])
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.evaluate("() => document.querySelector('#section-ldr').scrollIntoView()")
+    dash.shot(page, "social-default")
+    dash.close(page)
+
+    # ---- full desktop page with every panel populated
+    page = dash.new_page(social="clean", width=1440, height=1000, data_patch=with_third_party(tp))
+    dash.open(page)
+    pick_board(page, "movers", "7d", "gain")
+    page.wait_for_timeout(300)
+    shot_el(dash, page, "#section-ldr", "social-ldr-gainers-7d")
+    pick_board(page, "controversial", "24h", None)
+    shot_el(dash, page, "#section-ldr", "social-ldr-controversial")
+    dash.close(page)
+
+
 SUITES = {
     "smoke": cmd_smoke, "ranges": cmd_ranges, "compare": cmd_compare, "toggles": cmd_toggles, "waves": cmd_waves,
-    "exports": cmd_exports, "guide": cmd_guide, "keyboard": cmd_keyboard, "live": cmd_live,
+    "exports": cmd_exports, "guide": cmd_guide, "keyboard": cmd_keyboard, "live": cmd_live, "social": cmd_social,
 }
 
 

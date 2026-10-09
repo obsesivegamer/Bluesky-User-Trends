@@ -773,6 +773,414 @@
     return [1, 2, 5].some((m) => Math.abs(mantissa - m) < 1e-6);
   }
 
+  // ---------------------------------------------------------------------------
+  // Social boards (data/social.js, written by scripts/build-social.js). Everything here treats the
+  // file as untrusted: guardrails are re-applied and every string is cleaned before it can render.
+  // ---------------------------------------------------------------------------
+
+  const SOCIAL_MIN_FOLLOWERS = 10000;
+  const SOCIAL_ADULT_LABELS = ['porn', 'sexual', 'nudity', 'graphic-media', 'gore'];
+  const SOCIAL_TOP = 25;
+  const SOCIAL_TOP_POSTS = 10;
+  const SOCIAL_POST_CHARS = 280;
+  const SOCIAL_MIN_CONTROVERSIAL_BLOCKS = 100;
+  const SOCIAL_EMBED_KINDS = ['image', 'video', 'quote', 'link'];
+  const SOCIAL_NAME_CHARS = 64;
+  const SOCIAL_HANDLE = /^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+  const SOCIAL_BOARDS = [
+    { id: 'blocked', label: 'MOST BLOCKED', windows: ['24h', '7d', 'all'] },
+    { id: 'growing', label: 'FASTEST GROWING', windows: ['24h', '7d'] },
+    { id: 'followed', label: 'MOST FOLLOWED', windows: [] },
+    { id: 'movers', label: 'GAINERS·LOSERS', windows: ['24h', '7d'], dirs: true },
+    { id: 'controversial', label: 'CONTROVERSIAL', windows: ['24h', '7d'] }
+  ];
+  const SOCIAL_WINDOW_LABELS = { '24h': '24 hours', '7d': '7 days', all: 'all time' };
+  const SOCIAL_EMPTY = 'Collecting — first data after the next daily run.';
+  const SOCIAL_GUARDRAIL = 'Only accounts with at least 10,000 followers and no opt-out or moderation labels are named. Everyone else still counts toward the totals but is never listed.';
+
+  // Controls (C0 except tab/newline), bidi overrides/isolates and zero-width marks are dropped; length is capped.
+  function cleanText(value, max, keepNewlines) {
+    if (typeof value !== 'string') return '';
+    let t = value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g, '');
+    t = keepNewlines ? t.replace(/\n{3,}/g, '\n\n') : t.replace(/\s+/g, ' ');
+    t = t.trim();
+    const chars = Array.from(t);
+    return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : t;
+  }
+
+  // Same canonical form as lib/social.js: NFKC (fullwidth '！' becomes '!'), controls and zero-width marks
+  // dropped, trimmed, lowercase, so a padded or recased '!hide' or 'Porn' cannot slip past the checks below.
+  function normalizeLabel(v) {
+    return v.normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').trim().toLowerCase();
+  }
+
+  function labelVals(labels) {
+    if (!Array.isArray(labels)) return [];
+    return labels.map((l) => normalizeLabel(typeof l === 'string' ? l : l && typeof l.val === 'string' ? l.val : '')).filter(Boolean);
+  }
+
+  const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+  function socialMinFollowers(guardrails) {
+    const m = guardrails && num(guardrails.min_followers);
+    return Math.max(SOCIAL_MIN_FOLLOWERS, m || 0);
+  }
+
+  function isEligibleAccount(acc, guardrails) {
+    if (!acc || typeof acc !== 'object') return false;
+    if (typeof acc.handle !== 'string' || !SOCIAL_HANDLE.test(acc.handle) || /\.invalid$/i.test(acc.handle)) return false;
+    const followers = num(acc.followers);
+    if (followers == null || followers < socialMinFollowers(guardrails)) return false;
+    return !labelVals(acc.labels).some((v) => v.startsWith('!'));
+  }
+
+  function socialAdultLabels(guardrails) {
+    const extra = guardrails && Array.isArray(guardrails.adult_labels) ? guardrails.adult_labels.filter((v) => typeof v === 'string').map(normalizeLabel).filter(Boolean) : [];
+    return new Set([...SOCIAL_ADULT_LABELS, ...extra]);
+  }
+
+  function normalizeSocial(raw) {
+    if (!raw || typeof raw !== 'object' || raw.schema !== 1) return null;
+    if (!raw.accounts || typeof raw.accounts !== 'object' || !raw.boards || typeof raw.boards !== 'object') return null;
+    return raw;
+  }
+
+  // Avatars come from Bluesky's image CDN only (the page footer says so); anything else shows the placeholder.
+  function safeAvatarUrl(url) {
+    if (typeof url !== 'string' || url.length > 2048) return null;
+    try {
+      const u = new URL(url);
+      return u.protocol === 'https:' && u.hostname === 'cdn.bsky.app' && !u.username && !u.password && !u.port ? u.href : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  const profileUrl = (handle) => `https://bsky.app/profile/${encodeURIComponent(handle)}`;
+
+  const SOCIAL_POST_URI = /^at:\/\/(did:[a-z0-9]+:[A-Za-z0-9._:%-]+)\/app\.bsky\.feed\.post\/([A-Za-z0-9._~-]{1,64})$/;
+
+  // Link to a post on bsky.app. When authorDid is given the uri must belong to that account, so the handle in
+  // the link and the post it points at can never disagree.
+  function postUrl(handle, uri, authorDid) {
+    const m = SOCIAL_POST_URI.exec(typeof uri === 'string' ? uri : '');
+    if (!m || (authorDid !== undefined && m[1] !== authorDid)) return null;
+    return `${profileUrl(handle)}/post/${m[2]}`;
+  }
+
+  function resolveBoard(board, win, dir) {
+    const def = SOCIAL_BOARDS.find((b) => b.id === board) || SOCIAL_BOARDS[0];
+    const w = def.windows.includes(win) ? win : (def.windows[0] || null);
+    const d = def.dirs ? (dir === 'loss' ? 'loss' : 'gain') : null;
+    let key;
+    if (def.id === 'followed') key = 'followed';
+    else if (def.id === 'movers') key = `${d === 'loss' ? 'losers' : 'gainers'}_${w}`;
+    else key = `${def.id}_${w}`;
+    return { id: def.id, label: def.label, windows: def.windows, dirs: Boolean(def.dirs), win: w, dir: d, key };
+  }
+
+  // Eligible rows of one board, best first, at most SOCIAL_TOP. Ineligible or unresolvable accounts are dropped.
+  function socialBoardRows(social, key) {
+    const list = social && social.boards && Array.isArray(social.boards[key]) ? social.boards[key] : [];
+    const accounts = (social && social.accounts) || {};
+    const seen = new Set();
+    const out = [];
+    for (const r of list) {
+      if (!r || typeof r.did !== 'string' || seen.has(r.did) || !hasOwn(accounts, r.did)) continue;
+      const value = num(r.value);
+      const account = accounts[r.did];
+      if (value == null || !isEligibleAccount(account, social.guardrails)) continue;
+      const blocks = num(r.blocks);
+      const follows = num(r.follows);
+      if (/^controversial_/.test(key) && !(blocks != null && blocks >= SOCIAL_MIN_CONTROVERSIAL_BLOCKS && follows != null && follows >= 0)) continue;
+      seen.add(r.did);
+      out.push({ did: r.did, value, blocks, follows, belowCut: r.follows_below_cut === true, account });
+    }
+    const ascending = /^losers_/.test(key);
+    out.sort((a, b) => (ascending ? a.value - b.value : b.value - a.value));
+    return out.slice(0, SOCIAL_TOP);
+  }
+
+  function relativeTime(iso, nowMs) {
+    const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
+    if (!Number.isFinite(t) || !Number.isFinite(nowMs)) return '—';
+    const sec = Math.round((nowMs - t) / 1000);
+    if (sec < -300) return '—';
+    if (sec < 60) return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hours = Math.floor(min / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+    return `${Math.floor(days / 365)}y ago`;
+  }
+
+  function accountAge(iso, nowMs) {
+    const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
+    if (!Number.isFinite(t) || !Number.isFinite(nowMs) || t > nowMs) return '—';
+    const days = Math.floor((nowMs - t) / DAY_MS);
+    if (days < 30) return `${days}d`;
+    if (days < 365) return `${Math.floor(days / 30)}mo`;
+    const years = Math.floor(days / 365);
+    const months = Math.min(11, Math.floor((days - years * 365) / 30));
+    return months ? `${years}y ${months}mo` : `${years}y`;
+  }
+
+  // PDS service URL -> { host, kind }; kind is 'bsky' (Bluesky-operated), 'bridgy' (Bridgy Fed) or 'third'.
+  function pdsInfo(pds) {
+    let host = null;
+    try {
+      const u = new URL(String(pds));
+      if (u.protocol === 'https:' || u.protocol === 'http:') host = u.hostname.toLowerCase();
+    } catch (e) {
+      host = null;
+    }
+    if (!host) return null;
+    let kind = 'third';
+    if (host === 'atproto.brid.gy') kind = 'bridgy';
+    else if (host === 'bsky.network' || host.endsWith('.bsky.network') || host === 'bsky.social') kind = 'bsky';
+    return { host, kind };
+  }
+
+  const PDS_TAGS = { bsky: 'BSKY', bridgy: 'BRIDGY', third: '3RD PARTY' };
+
+  // A lower bound must never display above itself, so it is floored to one decimal, not rounded.
+  function floorTenth(v) {
+    return Math.floor(Math.floor(v * 100 + 1e-7) / 10) / 10;
+  }
+
+  function formatBoardMetric(res, entry) {
+    const v = entry.value;
+    if (res.id === 'controversial') {
+      // belowCut: the account missed a day's follow list, so `follows` is a ceiling and the ratio a floor.
+      const fol = entry.belowCut ? `≤${formatInteger(entry.follows)}` : formatInteger(entry.follows);
+      const sub = entry.blocks != null && entry.follows != null ? `${formatInteger(entry.blocks)} blk / ${fol} fol` : '';
+      return { text: entry.belowCut ? `≥${floorTenth(v).toFixed(1)}×` : `${v.toFixed(2)}×`, sub, tone: '' };
+    }
+    if (res.id === 'movers') return { text: formatSigned(v, false), sub: '', tone: v < 0 ? 'down' : v > 0 ? 'up' : '' };
+    return { text: formatInteger(v), sub: '', tone: '' };
+  }
+
+  const SOCIAL_METRIC_HEADS = {
+    blocked: 'BLOCKS', growing: 'NEW FOLLOWS', followed: 'FOLLOWERS', movers: 'NET FOLLOWERS', controversial: 'BLOCKS ÷ FOLLOWS'
+  };
+
+  function socialMetricHead(res) {
+    const base = SOCIAL_METRIC_HEADS[res.id];
+    return res.windows.length ? `${base} ${res.win === 'all' ? 'ALL' : res.win.toUpperCase()}` : base;
+  }
+
+  // One display row, with raw (unescaped) strings; buildLeaderboardRowsHTML escapes them.
+  function socialRowModel(res, entry, rank, nowMs) {
+    const a = entry.account;
+    const metric = formatBoardMetric(res, entry);
+    const pds = pdsInfo(a.pds);
+    const month = num(a.posts_this_month);
+    const lastPosted = typeof a.last_posted === 'string' && Number.isFinite(Date.parse(a.last_posted)) ? a.last_posted : null;
+    const created = typeof a.created_at === 'string' && Number.isFinite(Date.parse(a.created_at)) ? a.created_at : null;
+    return {
+      rank,
+      handle: a.handle,
+      name: cleanText(a.display_name, SOCIAL_NAME_CHARS) || a.handle,
+      url: profileUrl(a.handle),
+      avatar: safeAvatarUrl(a.avatar),
+      metric: metric.text, metricSub: metric.sub, tone: metric.tone,
+      followers: formatInteger(num(a.followers)),
+      posts: formatInteger(num(a.posts)),
+      month: month == null ? '—' : `${formatInteger(month)}${a.posts_this_month_capped ? '+' : ''}`,
+      monthTitle: a.posts_this_month_capped
+        ? `At least ${formatInteger(month)}: counting stopped before reaching the start of the month, so the real number is higher. Own posts including replies, excluding reposts.`
+        : 'Own posts this calendar month (UTC), including replies, excluding reposts',
+      last: lastPosted ? relativeTime(lastPosted, nowMs) : '—',
+      lastTitle: lastPosted ? formatUtcStamp(lastPosted) : 'No post found',
+      age: created ? accountAge(created, nowMs) : '—',
+      ageTitle: created ? `Created ${formatUtcStamp(created)}` : '',
+      pdsHost: pds ? pds.host : '—',
+      pdsKind: pds ? pds.kind : '',
+      pdsTag: pds ? PDS_TAGS[pds.kind] : ''
+    };
+  }
+
+  function avatarHTML(url, size) {
+    const safe = safeAvatarUrl(url);
+    return safe
+      ? `<img class="avatar" src="${escapeHtml(safe)}" width="${size}" height="${size}" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">`
+      : '<span class="avatar avatar-blank" aria-hidden="true"></span>';
+  }
+
+  function buildLeaderboardRowsHTML(models) {
+    return models.map((m) => {
+      const pds = m.pdsKind
+        ? `<span class="pds-host" title="${escapeHtml(m.pdsHost)}">${escapeHtml(m.pdsHost)}</span> <span class="pds-tag pds-${m.pdsKind}">${m.pdsTag}</span>`
+        : '<span class="pds-host">—</span>';
+      return `<tr data-handle="${escapeHtml(m.handle)}">`
+        + `<td class="col-rank">${m.rank}</td>`
+        + `<td class="col-acct"><a class="acct" href="${escapeHtml(m.url)}" target="_blank" rel="noopener">${avatarHTML(m.avatar, 24)}`
+        + `<span class="acct-text"><span class="acct-name">${escapeHtml(m.name)}</span><span class="acct-handle">@${escapeHtml(m.handle)}</span>`
+        + `<span class="acct-meta">${escapeHtml(m.followers)} followers</span></span></a></td>`
+        + `<td class="col-metric ${m.tone}"><span class="metric-main">${escapeHtml(m.metric)}</span>${m.metricSub ? `<span class="metric-sub">${escapeHtml(m.metricSub)}</span>` : ''}</td>`
+        + `<td class="col-opt">${escapeHtml(m.followers)}</td>`
+        + `<td class="col-opt">${escapeHtml(m.posts)}</td>`
+        + `<td class="col-opt" title="${escapeHtml(m.monthTitle)}">${escapeHtml(m.month)}</td>`
+        + `<td class="col-opt" title="${escapeHtml(m.lastTitle)}">${escapeHtml(m.last)}</td>`
+        + `<td class="col-opt col-xl" title="${escapeHtml(m.ageTitle)}">${escapeHtml(m.age)}</td>`
+        + `<td class="col-opt col-xl col-pds">${pds}</td>`
+        + '</tr>';
+    }).join('\n');
+  }
+
+  function boardCaveats(res, social) {
+    const w = res.win === '24h' ? '24 hours' : res.win === '7d' ? '7 days' : '';
+    const out = [];
+    if (res.id === 'blocked' && res.win === 'all') {
+      out.push('All-time blocks are recorded since early 2025 (Constellation index). Older blocks are only partly indexed, so true totals are higher.');
+    } else if (res.id === 'blocked') {
+      out.push(`Blocks received in the last ${w}, counted from the Jetstream firehose. Gross counts: unblocks are not subtracted.`);
+    } else if (res.id === 'growing') {
+      out.push(`Follows received in the last ${w}, counted from the Jetstream firehose. Gross counts: unfollows are not subtracted.`);
+    } else if (res.id === 'followed') {
+      out.push('Followers per the Bluesky AppView at the last daily run (exact).');
+    } else if (res.id === 'movers') {
+      out.push(`Net change in followers over ${w}, from daily snapshots (exact, unfollows included). Needs two snapshots that far apart.`);
+    } else if (res.id === 'controversial') {
+      out.push(`Blocks received ÷ follows received in the last ${w}, for accounts with at least 100 blocks in the window. Both are gross Jetstream counts. A ratio shown as ≥ means the account fell below the follow list cutoff on at least one day, so its follows are only known to be at most the number shown.`);
+    }
+    const cov = social && social.coverage;
+    if (cov && (res.win === '24h' || res.win === '7d') && (res.id === 'blocked' || res.id === 'growing' || res.id === 'controversial')) {
+      if (res.win === '24h' && cov.complete_24h === false) out.push('The latest day was only partly collected, so 24h counts are low.');
+      const d7 = num(cov.days_7d);
+      if (res.win === '7d' && d7 != null && d7 < 7) out.push(`Only ${d7} of the last 7 days were collected so far, so 7d counts are low.`);
+    }
+    return out;
+  }
+
+  function socialTopPosts(social) {
+    const list = social && Array.isArray(social.top_posts) ? social.top_posts : [];
+    const accounts = (social && social.accounts) || {};
+    const adult = socialAdultLabels(social && social.guardrails);
+    const seen = new Set();
+    const out = [];
+    const day = social && social.day;
+    const dayStart = typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) ? Date.parse(`${day}T00:00:00Z`) : NaN;
+    for (const p of list) {
+      if (!p || typeof p !== 'object' || typeof p.author !== 'string' || !hasOwn(accounts, p.author) || seen.has(p.uri)) continue;
+      const account = accounts[p.author];
+      if (!isEligibleAccount(account, social.guardrails)) continue;
+      const labels = [...labelVals(p.labels), ...labelVals(account.labels)];
+      if (labels.some((v) => v.startsWith('!') || adult.has(v))) continue;
+      const url = postUrl(account.handle, p.uri, p.author);
+      const likes = num(p.likes);
+      if (!url || likes == null) continue;
+      const created = typeof p.created_at === 'string' ? Date.parse(p.created_at) : NaN;
+      if (Number.isFinite(dayStart) && !(created >= dayStart && created < dayStart + DAY_MS)) continue;
+      const text = cleanText(p.text, SOCIAL_POST_CHARS, true);
+      seen.add(p.uri);
+      out.push({
+        uri: p.uri, url, text, account, likes,
+        embed: SOCIAL_EMBED_KINDS.includes(p.embed) ? p.embed : null,
+        reposts: num(p.reposts), quotes: num(p.quotes), replies: num(p.replies),
+        created_at: Number.isFinite(created) ? p.created_at : null
+      });
+    }
+    out.sort((a, b) => b.likes - a.likes);
+    return out.slice(0, SOCIAL_TOP_POSTS);
+  }
+
+  const PST_PARTIAL = 'The latest day was only partly collected, so posts from the hours not collected may be missing.';
+
+  function postsCaveats(social) {
+    return social && social.coverage && social.coverage.complete_24h === false ? [PST_PARTIAL] : [];
+  }
+
+  function postsSubtitle(social) {
+    const day = postsCaveats(social).length ? 'latest' : 'latest complete';
+    return `The 10 most-liked posts created on the ${day} UTC day, by accounts with 10K+ followers. Like counts are exact; candidates come from a sample of the like and repost stream, so a post can be missed. Posts with no text show [image], [video], [quote] or [link].`;
+  }
+
+  function buildPostCardsHTML(posts, nowMs) {
+    const count = (v) => (v == null ? '—' : formatCompact(v));
+    return posts.map((p, i) => {
+      const a = p.account;
+      const name = cleanText(a.display_name, SOCIAL_NAME_CHARS) || a.handle;
+      const when = p.created_at ? relativeTime(p.created_at, nowMs) : '—';
+      const whenTitle = p.created_at ? formatUtcStamp(p.created_at) : '';
+      return '<li class="post-card">'
+        + '<div class="post-head">'
+        + `<span class="post-rank">${String(i + 1).padStart(2, '0')}</span>`
+        + `<a class="acct" href="${escapeHtml(profileUrl(a.handle))}" target="_blank" rel="noopener">${avatarHTML(a.avatar, 24)}`
+        + `<span class="acct-text"><span class="acct-name">${escapeHtml(name)}</span><span class="acct-handle">@${escapeHtml(a.handle)}</span></span></a>`
+        + `<a class="post-time" href="${escapeHtml(p.url)}" target="_blank" rel="noopener" title="${escapeHtml(whenTitle)}">${escapeHtml(when)}</a>`
+        + '</div>'
+        + (p.text
+          ? `<p class="post-text">${escapeHtml(p.text)}</p>`
+          : `<p class="post-text post-text-empty">${escapeHtml(`[${p.embed || 'no text'}]`)}</p>`)
+        + '<div class="post-stats">'
+        + `<span class="stat-likes"><b>${formatCompact(p.likes)}</b> likes</span>`
+        + `<span><b>${count(p.reposts)}</b> reposts</span>`
+        + `<span><b>${count(p.quotes)}</b> quotes</span>`
+        + `<span><b>${count(p.replies)}</b> replies</span>`
+        + `<a class="post-open" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">OPEN <span aria-hidden="true">↗</span></a>`
+        + '</div></li>';
+    }).join('\n');
+  }
+
+  // Share of active accounts on non-Bluesky hosts, from the newest complete own-count row that has third_party.
+  function decentralizationModel(ownCount) {
+    const rows = ownCount && Array.isArray(ownCount.rows) ? ownCount.rows : [];
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const r = rows[i];
+      if (!r || !r.complete || !r.third_party || typeof r.third_party !== 'object') continue;
+      const tp = r.third_party;
+      const bsky = num(r.active);
+      const third = num(tp.active);
+      if (bsky == null || third == null || bsky < 0 || third < 0 || bsky + third <= 0) continue;
+      const bridgy = Math.min(Math.max(num(tp.bridgy_active) || 0, 0), third);
+      const independent = third - bridgy;
+      const total = bsky + third;
+      const failed = Math.max(num(tp.hosts_failed) || 0, 0);
+      const capped = Math.max(num(tp.hosts_capped) || 0, 0);
+      return {
+        date: r.date, finishedAt: r.finished_at, bsky, independent, bridgy, third, total,
+        share: third / total,
+        parts: { bsky: bsky / total, independent: independent / total, bridgy: bridgy / total },
+        hosts: num(tp.hosts), hostsOk: num(tp.hosts_ok), hostsFailed: failed, hostsCapped: capped, partial: failed > 0 || capped > 0
+      };
+    }
+    return null;
+  }
+
+  function formatShare(x) {
+    return formatPct(x * 100, x > 0 && x < 0.01 ? 2 : 1);
+  }
+
+  function buildDecentralizationHTML(m) {
+    const seg = (cls, frac) => (frac > 0 ? `<span class="seg ${cls}" style="width:${(frac * 100).toFixed(4)}%"></span>` : '');
+    const item = (cls, name, count, frac, note) => `<li><span class="swatch ${cls}" aria-hidden="true"></span><span class="dec-name">${name}${note ? ` <span class="dec-note">${note}</span>` : ''}</span>`
+      + `<span class="dec-num">${formatInteger(count)}</span><span class="dec-pct">${formatShare(frac)}</span></li>`;
+    const label = `Active accounts by host: Bluesky-hosted ${formatShare(m.parts.bsky)}, independent PDS ${formatShare(m.parts.independent)}, Bridgy Fed ${formatShare(m.parts.bridgy)}`;
+    const notes = [];
+    if (m.hosts != null) notes.push(`${m.hostsOk != null ? `${formatInteger(m.hostsOk)} of ${formatInteger(m.hosts)}` : formatInteger(m.hosts)} non-Bluesky hosts answered`);
+    if (m.hostsFailed > 0) notes.push(m.hosts != null ? `${formatInteger(m.hostsFailed)} failed and add nothing` : `${formatInteger(m.hostsFailed)} non-Bluesky hosts failed and add nothing`);
+    if (m.hostsCapped > 0) notes.push(`${formatInteger(m.hostsCapped)} ${m.hostsCapped === 1 ? 'host was' : 'hosts were'} counted only up to the per-host limit`);
+    const hosts = `${notes.join('; ')}${m.partial ? `${notes.length ? ', ' : ''}so the share is a lower bound` : ''}`;
+    return '<div class="dec-hero">'
+      + `<span class="dec-big tabular-stat">${formatShare(m.share)}</span>`
+      + '<span class="dec-big-label">of active accounts are on non-Bluesky PDS hosts</span>'
+      + `<span class="dec-sub">${formatShare(m.parts.independent)} on independent PDS hosts, excluding Bridgy Fed</span>`
+      + '</div>'
+      + '<div class="dec-detail">'
+      + `<div class="dec-bar" role="img" aria-label="${escapeHtml(label)}">${seg('seg-bsky', m.parts.bsky)}${seg('seg-indep', m.parts.independent)}${seg('seg-bridgy', m.parts.bridgy)}</div>`
+      + '<ul class="dec-legend">'
+      + item('seg-bsky', 'Bluesky-hosted', m.bsky, m.parts.bsky, '')
+      + item('seg-indep', 'Independent PDS', m.independent, m.parts.independent, 'self-hosted &amp; community servers')
+      + item('seg-bridgy', 'Bridgy Fed', m.bridgy, m.parts.bridgy, 'bridged accounts')
+      + '</ul>'
+      + `<p class="dec-foot">${m.total ? `${formatInteger(m.total)} active accounts counted` : ''}${m.date ? ` on ${formatDay(m.date)}` : ''}${hosts ? ` · ${hosts}` : ''}</p>`
+      + '</div>';
+  }
+
   const pure = {
     ACTIVITY_KEYS, RANGES, WAVES, MILESTONES, DEFAULT_STATE, RATIO_MODES, VELOCITY_MODES,
     isoToDayNum, dayNumToIso, addDays, addMonths, daysBetween, parseArchiveDate, escapeHtml,
@@ -783,7 +1191,11 @@
     serializeHashState, csvCell, buildCSV, buildChartCSV, resetChartZoom, computePrerenderValues,
     computeTickerItems, buildTickerHTML, buildMilestoneRows, buildMilestoneRowsHTML, computeWaveStats, formatChange,
     parseLiveFeed, acceptLiveReading, estimateLiveTotal, buildLiveUrl, syncFaqJsonLd, niceLogTick, trendClass,
-    formatAxisCompact, pickDateTicks, formatDateTick, logTicks, linearTicks, ownCountSeries, latestOwnCount
+    formatAxisCompact, pickDateTicks, formatDateTick, logTicks, linearTicks, ownCountSeries, latestOwnCount,
+    SOCIAL_BOARDS, SOCIAL_MIN_FOLLOWERS, SOCIAL_EMPTY, SOCIAL_GUARDRAIL, cleanText, isEligibleAccount, normalizeSocial,
+    normalizeLabel, floorTenth, safeAvatarUrl, profileUrl, postUrl, resolveBoard, socialBoardRows, relativeTime, accountAge, pdsInfo, formatBoardMetric,
+    socialMetricHead, socialRowModel, buildLeaderboardRowsHTML, boardCaveats, postsCaveats, postsSubtitle, socialTopPosts, buildPostCardsHTML,
+    decentralizationModel, buildDecentralizationHTML, formatShare
   };
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -2444,6 +2856,137 @@
     });
   }
 
+  // ---------------- social boards (LDR, PST, DEC) ----------------
+
+  const social = { data: null, board: SOCIAL_BOARDS[0].id, win: '24h', dir: 'gain' };
+
+  function socialMessage(el, text) {
+    if (!el) return;
+    el.hidden = !text;
+    setText(el, text || '');
+  }
+
+  function renderLeaderboard() {
+    const section = $('#section-ldr');
+    if (!section) return;
+    const res = resolveBoard(social.board, social.win, social.dir);
+    const nowMs = Date.now();
+    $$('.ldr-mode-btn').forEach((b) => {
+      const on = b.dataset.board === res.id;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    const winPill = $('#ldr-win-pill');
+    if (winPill) {
+      winPill.hidden = !res.windows.length;
+      $$('.ldr-win-btn', winPill).forEach((b) => {
+        b.hidden = !res.windows.includes(b.dataset.win);
+        const on = b.dataset.win === res.win;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    }
+    const dirPill = $('#ldr-dir-pill');
+    if (dirPill) {
+      dirPill.hidden = !res.dirs;
+      $$('.ldr-dir-btn', dirPill).forEach((b) => {
+        const on = b.dataset.dir === res.dir;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    }
+    const rows = social.data ? socialBoardRows(social.data, res.key) : [];
+    const models = rows.map((entry, i) => socialRowModel(res, entry, i + 1, nowMs));
+    const body = $('#ldr-body');
+    if (body) body.innerHTML = buildLeaderboardRowsHTML(models);
+    const wrap = $('#ldr-table-wrap');
+    if (wrap) wrap.hidden = !models.length;
+    setText($('#ldr-metric-head'), socialMetricHead(res));
+    const moverKeys = ['gainers_24h', 'losers_24h', 'gainers_7d', 'losers_7d'];
+    const noSnapshots = res.id === 'movers' && social.data && !moverKeys.some((k) => Array.isArray(social.data.boards[k]) && social.data.boards[k].length);
+    const hint = noSnapshots ? ' Gainers and losers need two daily snapshots.' : '';
+    socialMessage($('#ldr-empty'), models.length ? '' : `${SOCIAL_EMPTY}${hint}`);
+    const caveats = $('#ldr-caveats');
+    if (caveats) {
+      caveats.textContent = '';
+      boardCaveats(res, social.data).forEach((line) => {
+        const li = doc.createElement('li');
+        li.textContent = line;
+        caveats.appendChild(li);
+      });
+    }
+    const asOf = social.data ? `${formatDay(social.data.day)} · built ${formatUtcStamp(social.data.generated_at)}` : 'NO DATA YET';
+    setText($('#ldr-asof'), social.data && typeof social.data.day === 'string' ? `DAY ${social.data.day}` : 'NO DATA');
+    const asOfEl = $('#ldr-asof');
+    if (asOfEl) asOfEl.title = asOf;
+    const winLabel = res.win ? `, ${SOCIAL_WINDOW_LABELS[res.win]}` : '';
+    const dirLabel = res.dir === 'loss' ? ', losers' : res.dir === 'gain' ? ', gainers' : '';
+    setText($('#ldr-live'), `${res.label.toLowerCase()}${winLabel}${dirLabel}: ${models.length} accounts`);
+  }
+
+  function renderPosts() {
+    const list = $('#pst-list');
+    if (!list) return;
+    const posts = social.data ? socialTopPosts(social.data) : [];
+    list.innerHTML = buildPostCardsHTML(posts, Date.now());
+    list.hidden = !posts.length;
+    socialMessage($('#pst-empty'), posts.length ? '' : SOCIAL_EMPTY);
+    setText($('#pst-subtitle'), postsSubtitle(social.data));
+    const notes = $('#pst-caveats');
+    if (notes) {
+      notes.textContent = '';
+      postsCaveats(social.data).forEach((line) => {
+        const li = doc.createElement('li');
+        li.textContent = line;
+        notes.appendChild(li);
+      });
+      notes.hidden = !notes.children.length;
+    }
+    setText($('#pst-asof'), social.data && typeof social.data.day === 'string' ? `UTC DAY ${social.data.day}` : 'NO DATA');
+  }
+
+  function renderDecentralization() {
+    const box = $('#dec-body');
+    if (!box) return;
+    const model = decentralizationModel(app.data && app.data.own_count);
+    box.hidden = !model;
+    box.innerHTML = model ? buildDecentralizationHTML(model) : '';
+    socialMessage($('#dec-empty'), model ? '' : SOCIAL_EMPTY);
+    setText($('#dec-asof'), model ? `AS OF ${model.date}` : 'NO DATA');
+  }
+
+  function wireSocial() {
+    $$('.ldr-mode-btn').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.board === social.board) return;
+      social.board = b.dataset.board;
+      renderLeaderboard();
+    }));
+    $$('.ldr-win-btn').forEach((b) => b.addEventListener('click', () => {
+      social.win = b.dataset.win;
+      renderLeaderboard();
+    }));
+    $$('.ldr-dir-btn').forEach((b) => b.addEventListener('click', () => {
+      social.dir = b.dataset.dir;
+      renderLeaderboard();
+    }));
+    ['#ldr-body', '#pst-list'].forEach((sel) => {
+      const el = $(sel);
+      if (el) el.addEventListener('error', (e) => { if (e.target && e.target.tagName === 'IMG') e.target.classList.add('avatar-broken'); }, true);
+    });
+  }
+
+  function initSocial() {
+    try {
+      social.data = normalizeSocial(root.BLUESKY_SOCIAL);
+      renderLeaderboard();
+      renderPosts();
+      renderDecentralization();
+      wireSocial();
+    } catch (err) {
+      if (root.console) root.console.error('Social boards failed to render.', err);
+    }
+  }
+
   function showFatal(message) {
     setStatus('error', message);
     const banner = $('#data-error');
@@ -2475,6 +3018,7 @@
       createCharts();
       wireControls();
       applyState();
+      initSocial();
       const usersEl = $('#kpi-users-value');
       const total = num(data.snapshot && data.snapshot.total_users);
       const lastVel = app.s.new_users[app.s.length - 1];

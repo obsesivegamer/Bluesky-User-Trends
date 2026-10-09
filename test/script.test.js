@@ -183,8 +183,7 @@ test('filterDataByRange filters to migration-wave windows', () => {
 test('getRangeLabel describes ranges and waves; comparison works inside a wave', () => {
   assert.equal(T.getRangeLabel('1Y'), 'Past Year');
   assert.equal(T.getRangeLabel('YTD'), 'Year to Date');
-  assert.match(T.getRangeLabel('W24NOV'), /Post-election exodus/);
-  assert.match(T.getRangeLabel('W24FEB'), /Feb 1, 2024/);
+  assert.ok(T.getRangeLabel('W24NOV') && T.getRangeLabel('W24FEB'), 'waves have a label');
   const rows = makeDays('2024-09-01', 120);
   const cmp = T.calculatePeriodComparison('W24NOV', rows);
   assert.ok(cmp);
@@ -592,7 +591,7 @@ test('index.html head and script order are safe for crawlers and GitHub Pages', 
   const head = html.slice(0, html.indexOf('</head>'));
   assert.ok(!/<a\b/i.test(head), 'no <a> in <head>');
   assert.ok(!/google-site-verification|googletagmanager|gtag\(|rel="me"/i.test(html));
-  const order = ['chart.js@4.5.1/dist/chart.umd.min.js', 'hammerjs@2.0.8/hammer.min.js', 'chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js', 'src="lib/format.js', 'src="data/bluesky-data.js?v=', 'src="script.js?v='];
+  const order = ['chart.js@4.5.1/dist/chart.umd.min.js', 'hammerjs@2.0.8/hammer.min.js', 'chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js', 'src="lib/format.js', 'src="data/bluesky-data.js?v=', 'src="data/social.js"', 'src="script.js?v='];
   const positions = order.map((s) => html.indexOf(s));
   positions.forEach((p, i) => assert.ok(p > 0, `${order[i]} is loaded`));
   assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'scripts load in order');
@@ -604,7 +603,7 @@ test('index.html head and script order are safe for crawlers and GitHub Pages', 
 test('every toggle control exposes its state and every chart has a text alternative', () => {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const buttons = [...html.matchAll(/<button\b[^>]*class="([^"]*)"[^>]*>/g)];
-  buttons.filter((m) => /\b(time-btn|vel-mode-btn|rat-mode-btn|series-toggle|wave-chip)\b/.test(m[1]))
+  buttons.filter((m) => /\b(time-btn|vel-mode-btn|rat-mode-btn|ldr-btn|series-toggle|wave-chip)\b/.test(m[1]))
     .forEach((m) => assert.match(m[0], /aria-pressed="(true|false)"/, m[0]));
   ['toggle-ma-btn', 'toggle-log-btn', 'toggle-compare-btn'].forEach((id) => assert.match(html, new RegExp(`id="${id}" aria-pressed="(true|false)"`)));
   const canvases = [...html.matchAll(/<canvas\b[^>]*>/g)].map((m) => m[0]);
@@ -618,4 +617,504 @@ test('every toggle control exposes its state and every chart has a text alternat
   assert.match(html, /<dialog id="guide-dialog"/);
   T.WAVES.forEach((w) => assert.match(html, new RegExp(`data-wave="${w.id}"`)));
   T.RANGES.forEach((r) => assert.match(html, new RegExp(`data-range="${r}"`)));
+});
+
+// ---------------------------------------------------------------------------
+// Social boards (LDR, PST, DEC)
+// ---------------------------------------------------------------------------
+
+const { buildSocialFixture, buildMaliciousFixture, toScript } = require('./fixtures/social-fixture.js');
+
+const SOCIAL_NOW = '2026-10-09T12:00:00Z';
+const SOCIAL_NOW_MS = Date.parse(SOCIAL_NOW);
+const socialFixture = () => buildSocialFixture({ now: SOCIAL_NOW });
+
+function renderBoard(social, board, win, dir) {
+  const res = T.resolveBoard(board, win, dir);
+  const entries = T.socialBoardRows(social, res.key);
+  return { res, entries, models: entries.map((e, i) => T.socialRowModel(res, e, i + 1, SOCIAL_NOW_MS)) };
+}
+
+test('resolveBoard picks the data key and falls back to a valid window', () => {
+  assert.equal(T.resolveBoard('blocked', '24h').key, 'blocked_24h');
+  assert.equal(T.resolveBoard('blocked', 'all').key, 'blocked_all');
+  assert.equal(T.resolveBoard('growing', 'all').key, 'growing_24h', 'ALL is only for blocks');
+  assert.equal(T.resolveBoard('followed', '7d').key, 'followed');
+  assert.deepEqual(T.resolveBoard('followed', '7d').windows, []);
+  assert.equal(T.resolveBoard('movers', '7d', 'loss').key, 'losers_7d');
+  assert.equal(T.resolveBoard('movers', '24h', 'bogus').key, 'gainers_24h');
+  assert.equal(T.resolveBoard('controversial', '7d').key, 'controversial_7d');
+  assert.equal(T.resolveBoard('nope', 'x').key, 'blocked_24h');
+  assert.deepEqual(T.SOCIAL_BOARDS.map((b) => b.id), ['blocked', 'growing', 'followed', 'movers', 'controversial']);
+});
+
+test('isEligibleAccount enforces followers, labels and a resolvable handle', () => {
+  const ok = { handle: 'someone.bsky.social', followers: 10000 };
+  assert.equal(T.isEligibleAccount(ok), true);
+  assert.equal(T.isEligibleAccount({ ...ok, followers: 9999 }), false);
+  assert.equal(T.isEligibleAccount({ ...ok, followers: '50000' }), false);
+  assert.equal(T.isEligibleAccount({ ...ok, labels: ['!no-unauthenticated'] }), false);
+  assert.equal(T.isEligibleAccount({ ...ok, labels: [{ val: '!hide' }] }), false);
+  assert.equal(T.isEligibleAccount({ ...ok, labels: [{ val: 'verified' }] }), true);
+  assert.equal(T.isEligibleAccount({ ...ok, handle: 'handle.invalid' }), false);
+  assert.equal(T.isEligibleAccount({ ...ok, handle: 'x"><b>.example' }), false);
+  assert.equal(T.isEligibleAccount({ ...ok, handle: 'nodots' }), false);
+  assert.equal(T.isEligibleAccount(null), false);
+  assert.equal(T.isEligibleAccount(ok, { min_followers: 5 }), true, 'a file cannot lower the floor');
+  assert.equal(T.isEligibleAccount(ok, { min_followers: 20000 }), false, 'a file may raise it');
+});
+
+test('label values are normalised before the guardrail checks (padding, case, controls, fullwidth bang)', () => {
+  const ok = { handle: 'someone.bsky.social', followers: 20000 };
+  for (const v of [' !hide', '\n!hide', '\u200b!hide', '！hide', '\t!No-Unauthenticated ', '!TAKEDOWN']) {
+    assert.equal(T.isEligibleAccount({ ...ok, labels: [v] }), false, JSON.stringify(v));
+    assert.equal(T.isEligibleAccount({ ...ok, labels: [{ val: v }] }), false, JSON.stringify(v));
+  }
+  assert.equal(T.isEligibleAccount({ ...ok, labels: ['not!a-bang', 'Verified'] }), true);
+  assert.equal(T.normalizeLabel(' ＰＯＲＮ\u200b '), 'porn');
+
+  const social = socialFixture();
+  const author = Object.keys(social.accounts).find((d) => !social.ineligibleDids.includes(d) && social.top_posts.some((p) => p.author === d && !p.labels && !social.hostilePosts.includes(p.uri)));
+  const mine = social.top_posts.filter((p) => p.author === author && !p.labels && !social.hostilePosts.includes(p.uri));
+  const survives = (s2) => T.socialTopPosts(s2).some((p) => p.uri === mine[0].uri);
+  assert.equal(survives(social), true);
+  const withPostLabel = (val) => ({ ...social, top_posts: social.top_posts.map((p) => (p.uri === mine[0].uri ? { ...p, labels: [{ val }] } : p)) });
+  for (const v of ['Porn', ' porn', '\u200bporn', 'Graphic-Media', 'GORE', ' !hide', '！warn']) assert.equal(survives(withPostLabel(v)), false, JSON.stringify(v));
+  for (const v of ['PORN', ' Sexual']) {
+    const s2 = { ...social, accounts: { ...social.accounts, [author]: { ...social.accounts[author], labels: [v] } } };
+    assert.equal(survives(s2), false, `author label ${JSON.stringify(v)}`);
+  }
+  const custom = { ...withPostLabel('spam'), guardrails: { ...social.guardrails, adult_labels: [' Spam '] } };
+  assert.equal(survives(custom), false, 'extra adult labels from the file are normalised too');
+});
+
+test('every board keeps only eligible accounts, ranked, at most 25', () => {
+  const social = socialFixture();
+  const bad = new Set(social.ineligibleDids);
+  const keys = Object.keys(social.boards);
+  assert.equal(keys.length, 12);
+  for (const key of keys) {
+    const rows = T.socialBoardRows(social, key);
+    assert.ok(rows.length > 0, key);
+    assert.ok(rows.length <= 25, key);
+    rows.forEach((r) => assert.ok(!bad.has(r.did), `${key} names an ineligible account`));
+    const values = rows.map((r) => r.value);
+    const sorted = [...values].sort((a, b) => (key.startsWith('losers') ? a - b : b - a));
+    assert.deepEqual(values, sorted, `${key} is ranked`);
+    assert.equal(new Set(rows.map((r) => r.did)).size, rows.length, `${key} has no duplicates`);
+  }
+  const raw = social.boards.blocked_24h.length;
+  assert.ok(raw > T.socialBoardRows(social, 'blocked_24h').length || raw >= 25);
+});
+
+test('socialBoardRows survives missing, malformed and hostile boards', () => {
+  assert.deepEqual(T.socialBoardRows(null, 'blocked_24h'), []);
+  assert.deepEqual(T.socialBoardRows({ boards: {}, accounts: {} }, 'blocked_24h'), []);
+  const social = {
+    guardrails: {},
+    accounts: { a: { handle: 'a.example.com', followers: 20000 } },
+    boards: { blocked_24h: [null, 5, { did: 'a' }, { did: 'a', value: 'x' }, { did: 'missing', value: 3 }, { did: '__proto__', value: 3 }, { did: 'a', value: 4 }, { did: 'a', value: 9 }] }
+  };
+  const rows = T.socialBoardRows(social, 'blocked_24h');
+  assert.deepEqual(rows.map((r) => [r.did, r.value]), [['a', 4]]);
+});
+
+test('relativeTime, accountAge and pdsInfo', () => {
+  const at = (sec) => new Date(SOCIAL_NOW_MS - sec * 1000).toISOString();
+  assert.equal(T.relativeTime(at(5), SOCIAL_NOW_MS), 'just now');
+  assert.equal(T.relativeTime(at(60 * 7), SOCIAL_NOW_MS), '7m ago');
+  assert.equal(T.relativeTime(at(3600 * 3 + 20), SOCIAL_NOW_MS), '3h ago');
+  assert.equal(T.relativeTime(at(86400 * 2.5), SOCIAL_NOW_MS), '2d ago');
+  assert.equal(T.relativeTime(at(86400 * 75), SOCIAL_NOW_MS), '2mo ago');
+  assert.equal(T.relativeTime(at(86400 * 800), SOCIAL_NOW_MS), '2y ago');
+  assert.equal(T.relativeTime(at(-120), SOCIAL_NOW_MS), 'just now');
+  assert.equal(T.relativeTime(at(-86400), SOCIAL_NOW_MS), '—');
+  assert.equal(T.relativeTime(null, SOCIAL_NOW_MS), '—');
+  assert.equal(T.relativeTime('garbage', SOCIAL_NOW_MS), '—');
+
+  assert.equal(T.accountAge(at(86400 * 12), SOCIAL_NOW_MS), '12d');
+  assert.equal(T.accountAge(at(86400 * 100), SOCIAL_NOW_MS), '3mo');
+  assert.equal(T.accountAge(at(86400 * 365 * 3), SOCIAL_NOW_MS), '3y');
+  assert.equal(T.accountAge(at(86400 * (365 * 2 + 95)), SOCIAL_NOW_MS), '2y 3mo');
+  assert.equal(T.accountAge(at(86400 * (365 * 2 + 364)), SOCIAL_NOW_MS), '2y 11mo');
+  assert.equal(T.accountAge(undefined, SOCIAL_NOW_MS), '—');
+
+  assert.deepEqual(T.pdsInfo('https://morel.us-east.host.bsky.network'), { host: 'morel.us-east.host.bsky.network', kind: 'bsky' });
+  assert.deepEqual(T.pdsInfo('https://Example-PDS.org/xrpc'), { host: 'example-pds.org', kind: 'third' });
+  assert.deepEqual(T.pdsInfo('https://atproto.brid.gy'), { host: 'atproto.brid.gy', kind: 'bridgy' });
+  assert.deepEqual(T.pdsInfo('https://bsky.network'), { host: 'bsky.network', kind: 'bsky' });
+  assert.deepEqual(T.pdsInfo('https://evilbsky.network.example.com'), { host: 'evilbsky.network.example.com', kind: 'third' });
+  assert.equal(T.pdsInfo('javascript:alert(1)'), null);
+  assert.equal(T.pdsInfo('not a url'), null);
+  assert.equal(T.pdsInfo(undefined), null);
+});
+
+test('safeAvatarUrl allows only https://cdn.bsky.app, no userinfo, no port', () => {
+  assert.equal(T.safeAvatarUrl('https://cdn.bsky.app/img/avatar/plain/did:plc:x/y@jpeg'), 'https://cdn.bsky.app/img/avatar/plain/did:plc:x/y@jpeg');
+  assert.equal(T.safeAvatarUrl('https://CDN.BSKY.APP/a.jpg'), 'https://cdn.bsky.app/a.jpg');
+  for (const bad of [
+    'https://user:pass@127.0.0.1/a.png', 'https://[::1]/a.png', 'https://127.0.0.1/a.png', 'https://evil.example/a.svg',
+    'https://cdn.bsky.app.evil.example/a.jpg', 'https://evilcdn.bsky.app/a.jpg', 'https://sub.cdn.bsky.app/a.jpg', 'https://bsky.app/a.jpg',
+    'https://user:pass@cdn.bsky.app/a.jpg', 'https://user@cdn.bsky.app/a.jpg', 'https://cdn.bsky.app:8443/a.jpg', 'https://cdn.bsky.app@evil.example/a.jpg',
+    'http://cdn.bsky.app/a.jpg', 'https://localhost/a.png'
+  ]) assert.equal(T.safeAvatarUrl(bad), null, bad);
+  const social = socialFixture();
+  const id = Object.keys(social.accounts).find((d) => !social.ineligibleDids.includes(d) && social.accounts[d].avatar);
+  social.accounts[id].avatar = 'https://user:pass@127.0.0.1/a.png';
+  const model = renderBoard(social, 'followed', null).models.find((m) => m.handle === social.accounts[id].handle);
+  assert.equal(model.avatar, null);
+  assert.ok(T.buildLeaderboardRowsHTML([model]).includes('avatar-blank'));
+});
+
+test('safeAvatarUrl only passes https URLs; profile and post links are built from a validated handle', () => {
+  assert.equal(T.safeAvatarUrl('https://cdn.bsky.app/img/a.jpg'), 'https://cdn.bsky.app/img/a.jpg');
+  assert.equal(T.safeAvatarUrl('http://cdn.bsky.app/a.jpg'), null);
+  assert.equal(T.safeAvatarUrl('javascript:alert(1)'), null);
+  assert.equal(T.safeAvatarUrl('data:image/png;base64,AAAA'), null);
+  assert.equal(T.safeAvatarUrl(''), null);
+  assert.equal(T.safeAvatarUrl(42), null);
+  assert.ok(!T.safeAvatarUrl('https://cdn.bsky.app/a.jpg" onerror="x').includes('"'));
+  assert.equal(T.profileUrl('a.bsky.social'), 'https://bsky.app/profile/a.bsky.social');
+  assert.equal(T.postUrl('a.bsky.social', 'at://did:plc:abc123/app.bsky.feed.post/3kabc'), 'https://bsky.app/profile/a.bsky.social/post/3kabc');
+  assert.equal(T.postUrl('a.bsky.social', 'at://did:plc:abc123/app.bsky.feed.like/3kabc'), null);
+  assert.equal(T.postUrl('a.bsky.social', 'https://evil.example/x'), null);
+});
+
+test('row formatting per board: metric, tone, posts this month, last post, PDS', () => {
+  const social = socialFixture();
+  const blocked = renderBoard(social, 'blocked', '24h');
+  const first = blocked.models[0];
+  assert.equal(first.rank, 1);
+  assert.match(first.metric, /^[\d,]+$/);
+  assert.equal(first.tone, '');
+  assert.equal(first.url, `https://bsky.app/profile/${first.handle}`);
+  assert.match(first.followers, /^[\d,]+$/);
+
+  const gain = renderBoard(social, 'movers', '24h', 'gain').models[0];
+  assert.match(gain.metric, /^\+[\d,]+$/);
+  assert.equal(gain.tone, 'up');
+  const loss = renderBoard(social, 'movers', '24h', 'loss').models[0];
+  assert.match(loss.metric, /^-[\d,]+$/);
+  assert.equal(loss.tone, 'down');
+
+  const con = renderBoard(social, 'controversial', '7d').models[0];
+  assert.match(con.metric, /^\d+\.\d{2}×$/);
+  assert.match(con.metricSub, /^[\d,]+ blk \/ [\d,]+ fol$/);
+
+  const all = renderBoard(social, 'followed', null).models;
+  const capped = all.find((m) => m.month.endsWith('+'));
+  assert.equal(capped.month, '1,000+');
+  assert.match(capped.monthTitle, /^At least 1,000/);
+  assert.ok(all.find((m) => !m.month.endsWith('+')).monthTitle, 'exact counts keep a title');
+  const never = all.find((m) => m.last === '—');
+  assert.ok(never, 'an account that never posted shows a dash');
+  assert.ok(all.some((m) => /^\d+[hm] ago$|^\d+d ago$/.test(m.last)));
+  assert.ok(all.every((m) => ['bsky', 'third', 'bridgy'].includes(m.pdsKind)));
+  assert.ok(all.some((m) => m.pdsKind === 'third') && all.some((m) => m.pdsKind === 'bridgy') && all.some((m) => m.pdsKind === 'bsky'));
+  assert.ok(all.every((m) => !m.pdsHost.includes('/') && !m.pdsHost.includes(':')), 'hostname only');
+  assert.equal(T.socialMetricHead(T.resolveBoard('blocked', 'all')), 'BLOCKS ALL');
+  assert.equal(T.socialMetricHead(T.resolveBoard('followed')), 'FOLLOWERS');
+});
+
+test('leaderboard rows render links, lazy avatars and never name ineligible accounts', () => {
+  const social = socialFixture();
+  const html = T.buildLeaderboardRowsHTML(renderBoard(social, 'blocked', '24h').models);
+  const rows = html.split('\n');
+  assert.ok(rows.length >= 20 && rows.length <= 25);
+  assert.match(html, /<a class="acct" href="https:\/\/bsky\.app\/profile\/[a-z0-9.-]+" target="_blank" rel="noopener">/);
+  assert.match(html, /<img class="avatar" src="https:\/\/cdn\.bsky\.app\/[^"]+" width="24" height="24" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">/);
+  assert.ok(html.includes('avatar-blank'), 'an account without an avatar gets a placeholder');
+  assert.match(html, /<span class="pds-tag pds-bsky">BSKY<\/span>/);
+  assert.match(html, /<span class="pds-tag pds-third">3RD PARTY<\/span>/);
+  for (const key of Object.keys(social.boards)) {
+    const board = T.socialBoardRows(social, key);
+    const out = T.buildLeaderboardRowsHTML(board.map((e, i) => T.socialRowModel(T.resolveBoard('blocked', '24h'), e, i + 1, SOCIAL_NOW_MS)));
+    ['Small Fry', 'Private Person', 'Hidden Account', 'Unresolved', 'Adult Author', 'smallfry', 'privateperson', 'hiddenaccount', 'handle.invalid', 'adultauthor']
+      .forEach((needle) => assert.ok(!out.includes(needle), `${key} must not render ${needle}`));
+  }
+});
+
+test('unsafe strings never reach the markup unescaped', () => {
+  const evil = buildMaliciousFixture({ now: SOCIAL_NOW });
+  const boardHtml = Object.keys(evil.boards).map((key) => {
+    const res = T.resolveBoard('blocked', '24h');
+    return T.buildLeaderboardRowsHTML(T.socialBoardRows(evil, key).map((e, i) => T.socialRowModel(res, e, i + 1, SOCIAL_NOW_MS)));
+  }).join('\n');
+  const postHtml = T.buildPostCardsHTML(T.socialTopPosts(evil), SOCIAL_NOW_MS);
+  for (const html of [boardHtml, postHtml]) {
+    assert.ok(!/<script/i.test(html), 'no script element');
+    assert.ok(!/<svg/i.test(html), 'no injected svg');
+    assert.ok(!/<img src=x/i.test(html), 'no injected img');
+    assert.ok(!/ onerror="window/i.test(html), 'no injected handler');
+    assert.ok(!/javascript:/i.test(html), 'no javascript: url');
+    assert.ok(!/src="http:/i.test(html), 'no http avatar');
+    assert.ok(!/[‮\u0000]/.test(html), 'no bidi override or NUL');
+    const tags = [...html.matchAll(/<(\w+)/g)].map((m) => m[1]);
+    assert.deepEqual([...new Set(tags)].filter((t) => !['tr', 'td', 'a', 'img', 'span', 'li', 'div', 'p', 'b'].includes(t)), []);
+  }
+  assert.ok(boardHtml.includes('&lt;img src=x onerror=&quot;window.__pwned=1&quot;&gt;Evil Name'));
+  assert.ok(boardHtml.includes('&quot;&gt;&lt;script&gt;'));
+  assert.ok(!boardHtml.includes('x"><b>'), 'a handle that is not a valid handle drops the account');
+  assert.ok(!boardHtml.includes('bad</b>'));
+  assert.ok(postHtml.includes('&lt;script&gt;window.__pwned=1&lt;/script&gt;'));
+  assert.ok(postHtml.includes('&amp; &quot;quotes&quot; &#39;single&#39;'));
+});
+
+test('cleanText strips controls and bidi marks and caps length', () => {
+  assert.equal(T.cleanText('a‮b\u0000c​d'), 'abcd');
+  assert.equal(T.cleanText('  many   spaces\n here '), 'many spaces here');
+  assert.equal(T.cleanText('l1\n\n\n\nl2', 280, true), 'l1\n\nl2');
+  assert.equal(T.cleanText(Array(400).fill('a').join(''), 280).length, 280);
+  assert.ok(T.cleanText(Array(400).fill('a').join(''), 280).endsWith('…'));
+  assert.equal(T.cleanText(null, 10), '');
+  assert.equal(T.cleanText({}, 10), '');
+});
+
+test('top posts: eligible authors only, adult/moderation labels skipped, 10 max, 280 chars, most liked first', () => {
+  const social = socialFixture();
+  const bad = new Set(social.ineligibleDids);
+  const posts = T.socialTopPosts(social);
+  assert.equal(posts.length, 10);
+  posts.forEach((p) => {
+    assert.ok(!bad.has(p.uri.split('/')[2]));
+    assert.ok(p.text.length <= 280);
+    assert.match(p.url, /^https:\/\/bsky\.app\/profile\/[a-z0-9.-]+\/post\/[A-Za-z0-9]+$/);
+  });
+  assert.deepEqual(posts.map((p) => p.likes), [...posts.map((p) => p.likes)].sort((a, b) => b - a));
+  assert.ok(!posts.some((p) => p.likes >= 52000), 'the high-like posts that break a rule are gone');
+  assert.ok(social.hostilePosts.length >= 5 && !posts.some((p) => social.hostilePosts.includes(p.uri)), 'shouted or padded labels, another day and a mismatched uri are all dropped');
+  assert.ok(posts.some((p) => p.text === '' && p.embed === 'image') && posts.some((p) => p.text === '' && p.embed === 'quote'), 'text-free posts stay');
+
+  const evil = buildMaliciousFixture({ now: SOCIAL_NOW });
+  const long = T.socialTopPosts(evil).find((p) => p.text.startsWith('xxxx'));
+  assert.equal(Array.from(long.text).length, 280);
+
+  const adultAuthor = { ...social, accounts: { ...social.accounts } };
+  const someone = social.top_posts.find((p) => !bad.has(p.author));
+  adultAuthor.accounts[someone.author] = { ...adultAuthor.accounts[someone.author], labels: ['sexual'] };
+  assert.ok(!T.socialTopPosts(adultAuthor).some((p) => p.uri === someone.uri));
+  assert.deepEqual(T.socialTopPosts(null), []);
+  assert.deepEqual(T.socialTopPosts({ top_posts: 'x', accounts: {} }), []);
+});
+
+test('top posts must belong to the board day and to the account their link names', () => {
+  const social = socialFixture();
+  const bad = new Set(social.ineligibleDids);
+  const base = social.top_posts.find((p) => !bad.has(p.author) && !p.labels && !social.hostilePosts.includes(p.uri));
+  const other = social.top_posts.find((p) => !bad.has(p.author) && p.author !== base.author);
+  const only = (p) => T.socialTopPosts({ ...social, top_posts: [p] });
+  assert.equal(only(base).length, 1);
+  assert.equal(only({ ...base, created_at: '2020-01-01T00:00:00Z' }).length, 0, 'a post from another day is dropped');
+  assert.equal(only({ ...base, created_at: `${social.day}T00:00:00Z` }).length, 1);
+  const nextDay = new Date(Date.parse(`${social.day}T00:00:00Z`) + 86400e3).toISOString();
+  assert.equal(only({ ...base, created_at: nextDay }).length, 0, 'the day ends at the next UTC midnight');
+  assert.equal(only({ ...base, created_at: new Date(Date.parse(nextDay) - 1).toISOString() }).length, 1);
+  assert.equal(only({ ...base, created_at: null }).length, 0);
+  assert.equal(only({ ...base, uri: other.uri }).length, 0, 'the uri names another account than the card would link to');
+  assert.equal(T.socialTopPosts({ ...social, day: 'soon', top_posts: [{ ...base, created_at: '2020-01-01T00:00:00Z' }] }).length, 1, 'no usable day, no day check');
+  assert.equal(T.postUrl('a.bsky.social', 'at://did:plc:abc/app.bsky.feed.post/3k', 'did:plc:abc'), 'https://bsky.app/profile/a.bsky.social/post/3k');
+  assert.equal(T.postUrl('a.bsky.social', 'at://did:plc:abc/app.bsky.feed.post/3k', 'did:plc:other'), null);
+});
+
+test('top posts with no text stay, ranked by likes, with an image/quote placeholder; counts must be numbers', () => {
+  const social = socialFixture();
+  const bad = new Set(social.ineligibleDids);
+  const base = social.top_posts.find((p) => !bad.has(p.author) && !p.labels && !social.hostilePosts.includes(p.uri));
+  const mk = (n, over) => ({ ...base, uri: base.uri.replace(/[^/]+$/, `3zz${n}`), url: '', ...over });
+  const posts = [
+    mk(1, { text: '', embed: 'image', likes: 90000 }),
+    mk(2, { text: '   \u200b ', embed: 'quote', likes: 80000 }),
+    mk(3, { text: '', embed: '<img>', likes: 70000 }),
+    mk(4, { text: '', likes: 60000 }),
+    mk(5, { text: 'numeric strings are not likes', likes: '15000' }),
+    mk(6, { text: 'null likes', likes: null }),
+    mk(7, { text: 'odd counts', likes: 5, reposts: '9', quotes: null }),
+    ...social.top_posts.filter((p) => !bad.has(p.author) && !p.labels && !social.hostilePosts.includes(p.uri))
+  ];
+  const out = T.socialTopPosts({ ...social, top_posts: posts });
+  assert.deepEqual(out.slice(0, 4).map((p) => p.uri.split('/').pop()), ['3zz1', '3zz2', '3zz3', '3zz4']);
+  assert.ok(!out.some((p) => /numeric strings|null likes/.test(p.text)), 'a non-numeric likes value cannot take a slot');
+  const html = T.buildPostCardsHTML(out, SOCIAL_NOW_MS);
+  assert.match(html, /<p class="post-text post-text-empty">\[image\]<\/p>/);
+  assert.match(html, /<p class="post-text post-text-empty">\[quote\]<\/p>/);
+  assert.equal((html.match(/\[no text\]/g) || []).length, 2, 'an unknown or hostile embed value falls back to [no text]');
+  assert.ok(!html.includes('<img>') && !html.includes('&lt;img&gt;'));
+  const odd = T.buildPostCardsHTML(T.socialTopPosts({ ...social, top_posts: [mk(7, { text: 'odd counts', likes: 5, reposts: '9', quotes: null })] }), SOCIAL_NOW_MS);
+  assert.match(odd, /<b>—<\/b> reposts/);
+  assert.match(odd, /<b>—<\/b> quotes/);
+  assert.match(odd, /<b>[\d.]+K?<\/b> replies/);
+  assert.match(T.postsSubtitle(social), /\[image\]/);
+});
+
+test('post cards show the counts, the time and a link to the post', () => {
+  const html = T.buildPostCardsHTML(T.socialTopPosts(socialFixture()), SOCIAL_NOW_MS);
+  assert.equal((html.match(/<li class="post-card">/g) || []).length, 10);
+  assert.match(html, /<span class="post-rank">01<\/span>/);
+  assert.match(html, /<b>[\d.,]+[KM]?<\/b> likes/);
+  assert.match(html, /reposts/);
+  assert.match(html, /quotes/);
+  assert.match(html, /replies/);
+  assert.match(html, /<a class="post-time" href="https:\/\/bsky\.app\/profile\/[^"]+\/post\/[^"]+" target="_blank" rel="noopener" title="\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC">\d+[hmd] ago<\/a>/);
+});
+
+test('board caveats cover gross counts, the Constellation window, net snapshots and coverage gaps', () => {
+  const social = socialFixture();
+  const say = (b, w) => T.boardCaveats(T.resolveBoard(b, w), social).join(' ');
+  for (const [b, w] of [['blocked', '24h'], ['blocked', '7d'], ['blocked', 'all'], ['growing', '24h'], ['movers', '24h'], ['controversial', '24h'], ['followed', undefined]]) {
+    assert.ok(say(b, w).length > 0, `${b} ${w} carries a caveat`);
+  }
+  assert.match(say('controversial', '24h'), /100 blocks/);
+  const gappy = { ...social, coverage: { days_7d: 3, complete_24h: false } };
+  assert.ok(T.boardCaveats(T.resolveBoard('blocked', '24h'), gappy).length > T.boardCaveats(T.resolveBoard('blocked', '24h'), social).length, 'a partial day adds a caveat');
+  assert.match(T.boardCaveats(T.resolveBoard('blocked', '7d'), gappy).join(' '), /3 of the last 7/);
+  assert.equal(T.boardCaveats(T.resolveBoard('blocked', '7d'), social).length, 1);
+  assert.match(T.SOCIAL_GUARDRAIL, /10,000 followers/);
+});
+
+test('controversial rows below the follow-list cut show a floor ratio and a follows ceiling', () => {
+  const social = socialFixture();
+  const did = social.boards.controversial_24h[0].did;
+  social.boards.controversial_24h[0] = { did, value: 8.41, blocks: 244, follows: 29, follows_below_cut: true };
+  const res = T.resolveBoard('controversial', '24h');
+  const flagged = T.socialBoardRows(social, 'controversial_24h').find((e) => e.did === did);
+  assert.equal(flagged.belowCut, true);
+  const m = T.socialRowModel(res, flagged, 1, SOCIAL_NOW_MS);
+  assert.equal(m.metric, '≥8.4×');
+  assert.equal(m.metricSub, '244 blk / ≤29 fol');
+  for (const [value, want] of [[9.96, '≥9.9×'], [8.36, '≥8.3×'], [2.25, '≥2.2×'], [1.06, '≥1.0×'], [10, '≥10.0×'], [0.29, '≥0.2×'], [3.3, '≥3.3×'], [5.8, '≥5.8×']]) {
+    const m = T.formatBoardMetric(res, { value, blocks: 200, follows: 20, belowCut: true });
+    assert.equal(m.text, want, `${value} is a lower bound`);
+    assert.ok(Number(m.text.slice(1, -1)) <= value, `${m.text} must not exceed ${value}`);
+  }
+  assert.equal(T.formatBoardMetric(res, { value: 9.96, blocks: 200, follows: 20, belowCut: false }).text, '9.96×', 'an exact ratio keeps two decimals');
+  const exact = renderBoard(social, 'controversial', '7d').models[0];
+  assert.match(exact.metric, /^\d+\.\d{2}×$/);
+  assert.doesNotMatch(exact.metricSub, /≤/);
+  social.boards.controversial_24h[0].follows_below_cut = 'yes';
+  assert.equal(T.socialBoardRows(social, 'controversial_24h').find((e) => e.did === did).belowCut, false, 'only a literal true counts');
+  assert.match(T.boardCaveats(res, socialFixture()).join(' '), /≥/);
+});
+
+test('controversial rows need at least 100 blocks and a non-negative follows count', () => {
+  const social = socialFixture();
+  const dids = social.boards.controversial_24h.map((r) => r.did);
+  social.boards.controversial_24h = [
+    { did: dids[0], value: 3, blocks: 1, follows: 1 },
+    { did: dids[1], value: 3, blocks: 99, follows: 33 },
+    { did: dids[2], value: 3, blocks: 100, follows: 33 },
+    { did: dids[3], value: 2, blocks: 200, follows: -1 },
+    { did: dids[4], value: 2, blocks: 200 },
+    { did: dids[5], value: 1, blocks: 100, follows: 0 },
+    { did: dids[6], value: 1, follows: 10 }
+  ];
+  assert.deepEqual(T.socialBoardRows(social, 'controversial_24h').map((r) => r.did), [dids[2], dids[5]]);
+  const blocked = socialFixture();
+  blocked.boards.blocked_24h = [{ did: dids[0], value: 3, blocks: 1 }];
+  assert.equal(T.socialBoardRows(blocked, 'blocked_24h').length, 1, 'only controversial boards have the 100-block floor');
+});
+
+test('top posts panel says "latest UTC day" with a partial-day caveat when the latest day is incomplete', () => {
+  const social = socialFixture();
+  const full = { ...social, coverage: { days_7d: 7, complete_24h: true } };
+  const partial = { ...social, coverage: { days_7d: 7, complete_24h: false } };
+  assert.deepEqual(T.postsCaveats(full), []);
+  assert.deepEqual(T.postsCaveats(null), []);
+  assert.equal(T.postsCaveats(partial).length, 1);
+  assert.match(T.postsSubtitle(full), /latest complete UTC day/);
+  assert.match(T.postsSubtitle(partial), /the latest UTC day/);
+  assert.doesNotMatch(T.postsSubtitle(partial), /complete/);
+});
+
+test('normalizeSocial rejects anything that is not the v1 payload', () => {
+  assert.equal(T.normalizeSocial(undefined), null);
+  assert.equal(T.normalizeSocial('x'), null);
+  assert.equal(T.normalizeSocial({ schema: 2, accounts: {}, boards: {} }), null);
+  assert.equal(T.normalizeSocial({ schema: 1, accounts: {} }), null);
+  const f = socialFixture();
+  assert.equal(T.normalizeSocial(f), f);
+  assert.match(toScript(f), /^\/\/ generated by scripts\/build-social\.js — do not edit\nwindow\.BLUESKY_SOCIAL = \{/);
+  assert.ok(!toScript(f).includes('ineligibleDids'));
+});
+
+test('decentralization model: share, segments, latest complete row with third_party', () => {
+  const tp = { hosts: 120, hosts_ok: 118, hosts_failed: 2, repos: 900, active: 1000, bridgy_active: 250 };
+  const own = {
+    rows: [
+      { date: '2026-10-07', complete: true, active: 8000, third_party: { active: 100, bridgy_active: 0 } },
+      { date: '2026-10-08', complete: true, active: 9000, third_party: tp },
+      { date: '2026-10-09', complete: true, active: 9100 },
+      { date: '2026-10-10', complete: false, active: 9200, third_party: { active: 5, bridgy_active: 0 } }
+    ]
+  };
+  const m = T.decentralizationModel(own);
+  assert.equal(m.date, '2026-10-08');
+  assert.equal(m.share, 1000 / 10000);
+  assert.equal(m.bsky, 9000);
+  assert.equal(m.bridgy, 250);
+  assert.equal(m.independent, 750);
+  assert.equal(m.total, 10000);
+  assert.equal(m.parts.independent, 750 / 10000);
+  assert.ok(Math.abs(m.parts.bsky + m.parts.independent + m.parts.bridgy - 1) < 1e-12);
+  assert.equal(m.partial, true);
+  assert.equal(T.formatShare(m.share), '10.0%');
+  assert.equal(T.formatShare(0.0042), '0.42%');
+  assert.equal(T.formatShare(0), '0.0%');
+
+  assert.equal(T.decentralizationModel(null), null);
+  assert.equal(T.decentralizationModel({ rows: [] }), null);
+  assert.equal(T.decentralizationModel({ rows: [{ complete: true, active: 5 }] }), null, 'no third_party yet');
+  assert.equal(T.decentralizationModel({ rows: [{ complete: false, active: 5, third_party: { active: 1 } }] }), null);
+  assert.equal(T.decentralizationModel({ rows: [{ complete: true, active: 0, third_party: { active: 0 } }] }), null);
+  const clamped = T.decentralizationModel({ rows: [{ date: 'd', complete: true, active: 100, third_party: { active: 10, bridgy_active: 99 } }] });
+  assert.equal(clamped.bridgy, 10);
+  assert.equal(clamped.independent, 0);
+});
+
+test('decentralization markup: big percentage, segmented bar and counts', () => {
+  const m = T.decentralizationModel({
+    rows: [{ date: '2026-10-09', complete: true, active: 41724403, third_party: { hosts: 120, hosts_ok: 120, hosts_failed: 0, active: 1500000, bridgy_active: 200000 } }]
+  });
+  const html = T.buildDecentralizationHTML(m);
+  assert.match(html, /<span class="dec-big tabular-stat">3\.5%<\/span>/);
+  assert.match(html, /role="img" aria-label="Active accounts by host: Bluesky-hosted 96\.5%, independent PDS 3\.0%, Bridgy Fed 0\.46%"/);
+  assert.ok(html.includes('seg-bsky') && html.includes('seg-indep') && html.includes('seg-bridgy'));
+  assert.ok(html.includes('41,724,403') && html.includes('1,300,000') && html.includes('200,000'));
+  assert.match(html, /120 of 120/);
+  assert.ok(!/lower bound/.test(html));
+  const partial = T.buildDecentralizationHTML(T.decentralizationModel({ rows: [{ date: 'd', complete: true, active: 1000, third_party: { hosts: 2126, hosts_ok: 1910, hosts_failed: 216, active: 7, bridgy_active: 2 } }] }));
+  assert.match(partial, /1,910 of 2,126.*216.*lower bound/);
+  const noHosts = T.buildDecentralizationHTML(T.decentralizationModel({ rows: [{ date: 'd', complete: true, active: 1000, third_party: { active: 100, bridgy_active: 10, hosts_failed: 4 } }] }));
+  assert.match(noHosts, /4 .*failed.*lower bound/);
+  const capped = T.buildDecentralizationHTML(T.decentralizationModel({ rows: [{ date: 'd', complete: true, active: 100, third_party: { hosts: 10, hosts_ok: 10, hosts_failed: 0, active: 100, bridgy_active: 0, hosts_capped: 2 } }] }));
+  assert.match(capped, /10 of 10.*2 hosts.*lower bound/);
+  const one = T.buildDecentralizationHTML(T.decentralizationModel({ rows: [{ date: 'd', complete: true, active: 100, third_party: { hosts: 3, hosts_ok: 3, hosts_failed: 0, active: 10, bridgy_active: 0, hosts_capped: 1 } }] }));
+  assert.match(one, /1 host.*lower bound/);
+  assert.equal(T.decentralizationModel({ rows: [{ date: 'd', complete: true, active: 100, third_party: { active: 10, hosts_capped: 2 } }] }).partial, true);
+  const none = T.decentralizationModel({ rows: [{ date: 'd', complete: true, active: 100, third_party: { active: 0, bridgy_active: 0, hosts: 1, hosts_ok: 1, hosts_failed: 0 } }] });
+  const zero = T.buildDecentralizationHTML(none);
+  assert.ok(!zero.includes('class="seg seg-indep"') && !zero.includes('class="seg seg-bridgy"') && zero.includes('class="seg seg-bsky"'));
+  assert.match(zero, />0\.0%</);
+});
+
+test('index.html has the LDR, PST and DEC panels, accessible pills and the guardrail text', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  ['section-ldr', 'section-pst', 'section-dec', 'ldr-body', 'pst-list', 'dec-body', 'ldr-caveats', 'pst-caveats', 'pst-subtitle', 'guide-dialog'].forEach((id) => assert.match(html, new RegExp(`id="${id}"`)));
+  ['LDR', 'PST', 'DEC'].forEach((code) => assert.match(html, new RegExp(`<span class="fn-code">${code}</span><span class="fn-go">GO</span>`)));
+  T.SOCIAL_BOARDS.forEach((b) => assert.match(html, new RegExp(`data-board="${b.id}" aria-pressed="(true|false)"`)));
+  ['24h', '7d', 'all'].forEach((w) => assert.match(html, new RegExp(`data-win="${w}" aria-pressed="(true|false)"`)));
+  ['gain', 'loss'].forEach((d) => assert.match(html, new RegExp(`data-dir="${d}" aria-pressed="(true|false)"`)));
+  assert.match(html, /10,000 followers/);
+  assert.match(html, /g-social/);
+  assert.match(html, /<script src="data\/social\.js"><\/script>/);
+  assert.ok(html.indexOf('data/social.js') < html.indexOf('src="script.js'));
+  const faq = [...html.matchAll(/<summary class="faq-question"><span>([^<]+)<\/span>/g)].map((m) => m[1]);
+  assert.ok(faq.some((q) => /leaderboards/i.test(q)));
+});
+
+test('the page code tolerates a missing data/social.js', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  assert.match(src, /normalizeSocial\(root\.BLUESKY_SOCIAL\)/);
+  assert.equal(T.normalizeSocial(undefined), null);
+  assert.deepEqual(T.socialBoardRows(T.normalizeSocial(undefined), 'blocked_24h'), []);
+  assert.deepEqual(T.socialTopPosts(T.normalizeSocial(undefined)), []);
 });

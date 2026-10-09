@@ -6,3 +6,6 @@ artifacts/
 __pycache__/
 .venv/
 .env
+.reviews/
+.state/
+.state-cache/
