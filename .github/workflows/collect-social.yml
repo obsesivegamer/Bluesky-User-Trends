@@ -60,11 +60,12 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .state-cache
-          key: social-state-enc-${{ github.run_id }}
+          key: social-state-enc-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: social-state-enc-
 
       # A state that cannot be decrypted (key rotated, corrupt entry) is not fatal: the run starts from an
-      # empty state, and the builder keeps the published data/social.js when there are no day files.
+      # empty state, collects yesterday again, and the builder republishes from that one day (it keeps the
+      # published data/social.js only when there are no day files at all).
       - name: Decrypt the social state
         env:
           STATE_KEY: ${{ secrets.STATE_KEY }}
@@ -74,7 +75,7 @@ jobs:
             exit 0
           fi
           tar_file="$RUNNER_TEMP/state.tar"
-          if openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in .state-cache/state.tar.enc -out "$tar_file" && tar -xf "$tar_file"; then
+          if openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -iter 200000 -pass env:STATE_KEY -in .state-cache/state.tar.enc -out "$tar_file" && tar -xf "$tar_file"; then
             echo "Restored the social state."
           else
             echo "::warning::Could not decrypt or unpack the cached social state (wrong STATE_KEY or a corrupt entry); starting with an empty state."
@@ -102,6 +103,7 @@ jobs:
       # survive a red run. Only the encrypted file is in the cache path: the plaintext tar is built in
       # RUNNER_TEMP and removed, and .state itself is never under .state-cache.
       - name: Encrypt the social state
+        id: encrypt
         if: ${{ !cancelled() && steps.key.outcome == 'success' }}
         env:
           STATE_KEY: ${{ secrets.STATE_KEY }}
@@ -114,19 +116,21 @@ jobs:
           fi
           tar_file="$RUNNER_TEMP/state.tar"
           tar -cf "$tar_file" .state
-          if ! openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_KEY -in "$tar_file" -out .state-cache/state.tar.enc; then
+          if ! openssl enc -aes-256-cbc -pbkdf2 -md sha256 -iter 200000 -salt -pass env:STATE_KEY -in "$tar_file" -out .state-cache/state.tar.enc; then
             rm -f "$tar_file" .state-cache/state.tar.enc
             exit 1
           fi
           rm -f "$tar_file"
 
-      # A cache entry is immutable, hence a new key per run; the newest one is restored by prefix.
+      # A cache entry is immutable, hence a new key per run attempt (a re-run keeps its run_id); the newest
+      # one is restored by prefix. Skipped when encryption failed or wrote nothing, so an empty directory
+      # is never cached over the last good entry.
       - name: Save the encrypted social state
-        if: ${{ !cancelled() && steps.key.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.encrypt.outcome == 'success' && hashFiles('.state-cache/state.tar.enc') != '' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .state-cache
-          key: social-state-enc-${{ github.run_id }}
+          key: social-state-enc-${{ github.run_id }}-${{ github.run_attempt }}
 
       # After the build, so the gate checks the code and the data about to be committed.
       - name: Run tests

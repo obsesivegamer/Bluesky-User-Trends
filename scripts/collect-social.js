@@ -153,8 +153,10 @@ async function replay({ collections, startMs, tally, label }, deps = {}) {
 }
 
 // Replays each window in turn into `posts`. A window that did not run to its end, or had a silence
-// inside it, commits nothing (see SampleWindow.finish), so a later run samples its slot again.
-async function runSamples(windows, posts) {
+// inside it, commits nothing (see SampleWindow.finish), so a later run samples its slot again. With
+// stopOnFail, the first window whose replay gives up (the stream is down) ends the pass: the rest would
+// only repeat the same 12 failed connections. Resolves false when it stopped that way.
+async function runSamples(windows, posts, stopOnFail = false) {
   for (const [s, e] of windows) {
     const win = posts.window(s, e);
     const label = `sample ${js.iso(s).slice(11, 19)}`;
@@ -162,7 +164,12 @@ async function runSamples(windows, posts) {
     const r = win.finish(ok);
     const why = !ok ? 'incomplete, dropped' : r.committed ? `${Math.round(r.coveredMs / 1000)}s covered` : `${r.gaps.length} silent gaps, dropped (sampled again by a later run)`;
     log(`${label}: ${why}, ${posts.nLikes} likes / ${posts.nReposts} reposts so far`);
+    if (!ok && stopOnFail) {
+      log(`${label}: stream unavailable, skipping the remaining sample windows`);
+      return false;
+    }
   }
+  return true;
 }
 
 // The slots of the day's full schedule (24 windows over the UTC day) that lie inside what can be
@@ -174,19 +181,21 @@ function missingSampleSlots(existing, date, fromMs, toMs, sampleCount, sampleSec
 }
 
 // Samples only: no follow/block replay. Returns a piece that claims no follow/block coverage (its whole
-// range is a gap), so folding it adds the sampled posts and leaves the follow/block lists alone.
+// range is a gap), so folding it adds the sampled posts and leaves the follow/block lists alone. `down`
+// is true when it stopped early because a replay gave up.
 async function collectSamples(windows) {
   const startMs = windows[0][0];
   const endMs = windows[windows.length - 1][1];
   log(`samples only ${js.iso(startMs)} .. ${js.iso(endMs)}, ${windows.length} missing sample windows`);
   const posts = new js.PostSampleTally();
-  await runSamples(windows, posts);
-  return { startMs, endMs, gaps: [[startMs, endMs]], follows: new Map(), blocks: new Map(), nFollows: 0, nBlocks: 0, posts };
+  const down = !(await runSamples(windows, posts, true));
+  return { startMs, endMs, gaps: [[startMs, endMs]], follows: new Map(), blocks: new Map(), nFollows: 0, nBlocks: 0, posts, down };
 }
 
-async function collectPiece(fromMs, toMs, sampleCount, sampleSeconds, sampledWindows = []) {
-  const windows = js.freshSampleWindows(js.sampleWindows(fromMs, toMs, sampleCount, sampleSeconds), sampledWindows);
-  log(`piece ${js.iso(fromMs)} .. ${js.iso(toMs)}, ${windows.length} sample windows (${sampleCount - windows.length} already sampled)`);
+// `windows` are the like/repost windows to sample while the follow/block replay runs: the slots of the
+// day's schedule inside [fromMs, toMs] that are not committed yet (see missingSampleSlots).
+async function collectPiece(fromMs, toMs, windows) {
+  log(`piece ${js.iso(fromMs)} .. ${js.iso(toMs)}, ${windows.length} sample windows`);
   const tally = new js.FollowBlockTally(fromMs, toMs);
   const posts = windows.length ? new js.PostSampleTally() : null;
 
@@ -269,9 +278,11 @@ async function run(args) {
   let current = existing;
   const started = Date.now();
   for (const [from, to] of pieces) {
-    const n = args.samples !== undefined ? Number(args.samples) : js.sampleCountFor(from, to);
-    const sampled = current ? js.daySampleWindows(current) : [];
-    const folded = js.foldPiece(date, current, partial, await collectPiece(from, to, n, sampleSeconds, sampled));
+    // An explicit --samples N spreads N windows over the piece; otherwise the day's 24-slot schedule governs.
+    const windows = args.samples !== undefined
+      ? js.freshSampleWindows(js.sampleWindows(from, to, Number(args.samples), sampleSeconds), current ? js.daySampleWindows(current) : [])
+      : missingSampleSlots(current, date, from, to, js.SAMPLE_WINDOWS, sampleSeconds);
+    const folded = js.foldPiece(date, current, partial, await collectPiece(from, to, windows));
     current = folded.file;
     partial = folded.partial;
     if (partial) {
@@ -287,15 +298,21 @@ async function run(args) {
   // Sample slots still missing after the pieces: a window that ended in a silence is not committed, so
   // its slot is sampled here, even when follows and blocks are fully covered (and without replaying
   // them). Slots inside a piece collected just now were already tried this run and are left to the next.
-  const slots = current ? slotsOf(current).filter(([a, b]) => !pieces.some(([from, to]) => a < to && from < b)) : [];
-  if (slots.length) {
-    const folded = js.foldSamples(date, current, partial, await collectSamples(slots));
-    current = folded.file;
-    partial = folded.partial;
-    writeJson(file, current);
-    if (partial) writeJson(partialFile, partial);
-    else fs.rmSync(partialFile, { force: true });
-    log(`wrote ${path.relative(process.cwd(), file)}: ${current.totals.sample_seconds}s sampled${partial ? ', sidecar kept' : ''}`);
+  // Each slot is folded and written on its own, so a timeout later in the pass keeps the earlier ones,
+  // and the pass ends at the first slot whose replay gives up (the stream is down).
+  const slots = current ? slotsOf(current).filter(([a, b]) => !pieces.some(([from, to]) => a >= from && b <= to)) : [];
+  for (const slot of slots) {
+    const piece = await collectSamples([slot]);
+    if (piece.posts.windows.length) {
+      const folded = js.foldSamples(date, current, partial, piece);
+      current = folded.file;
+      partial = folded.partial;
+      writeJson(file, current);
+      if (partial) writeJson(partialFile, partial);
+      else fs.rmSync(partialFile, { force: true });
+      log(`wrote ${path.relative(process.cwd(), file)}: ${current.totals.sample_seconds}s sampled${partial ? ', sidecar kept' : ''}`);
+    }
+    if (piece.down) break;
   }
 
   log(`done in ${Math.round((Date.now() - started) / 1000)}s: ${JSON.stringify(current.totals)}`);
