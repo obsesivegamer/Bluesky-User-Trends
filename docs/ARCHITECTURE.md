@@ -50,17 +50,21 @@ top posts). Each commits its own files; the browser reads them like the main arc
  Jetstream replay ──► node scripts/collect-social.js          (lib/jetstream.js)
    wss://jetstream{1,2}.us-{east,west}.bsky.network/subscribe?cursor=…
    follow+block creates, all day  → counts per subject DID        ┐
-   like+repost creates, 24×150 s  → counts per post URI (sample)  ├─► data/social/days/YYYY-MM-DD.json   (contract A)
+   like+repost creates, 24×150 s  → counts per post URI (sample)  ├─► .state/social/days/YYYY-MM-DD.json   (contract A)
                                                                   ┘   + YYYY-MM-DD.partial.json while the day is incomplete
  day files ──┐
  AppView   ──┼─► node scripts/build-social.js                (lib/social.js)
  Constellation ┤    pool of candidate DIDs → getProfiles → guardrails → boards,
  PLC directory ┘    follower snapshot → gainers/losers, getPosts → top posts
                       ├─► data/social.js                          (contract B, window.BLUESKY_SOCIAL)
-                      ├─► data/social/pool.json                   (account pool + caches)
-                      └─► data/social/followers-history.json      (daily follower snapshots)
-                    npm test → git add data/social data/social.js → commit → push
+                      ├─► .state/social/pool.json                 (account pool + caches)
+                      └─► .state/social/followers-history.json    (daily follower snapshots)
+                    npm test → git add data/social.js → commit → push
                     (the builder reads only the day files, never the .partial.json sidecars)
+
+ .state/ is git-ignored and carried between runs by actions/cache (restore before collecting,
+ save after the build). PRIVACY: the day files, pool and snapshots name accounts under 10K followers
+ by DID; the page names only eligible ones, so only the filtered data/social.js goes into the public repo.
 
  Browser ── data/social.js (optional, no cache-bust; missing or invalid → "Collecting") → script.js → LDR, PST
             data/bluesky-data.js own_count.rows[].third_party                          → script.js → DEC
@@ -86,24 +90,24 @@ read it directly. That is why the archive is built server-side and committed.
 | `lib/accounts.js` | Pure helpers for the own account count: tally statuses, choose hosts, merge runs, net change, plus the third-party pass's hostname and IP checks and its summary (alias dedupe). |
 | `scripts/count-accounts.js` | Daily `listRepos` count of every account on Bluesky-operated hosts → `data/accounts-daily.json`. A second pass counts third-party PDS hosts (guarded DNS, 25-minute budget) and attaches `third_party` to the row (see "Third-party count"). |
 | `lib/jetstream.js` | Pure logic for the Jetstream collector: window choice within replay retention, coverage/gap accounting, follow/block and like/repost tallies, host failover (cursor rewind and commit dedupe), day-file building, merging (`foldPiece` with the partial sidecar) and pruning. No I/O. |
-| `scripts/collect-social.js` | Replays Jetstream for one UTC day (or the part of it still missing) and writes `data/social/days/<date>.json` (and, while the day is incomplete, `<date>.partial.json`). Retries, fails over, and always exits. |
+| `scripts/collect-social.js` | Replays Jetstream for one UTC day (or the part of it still missing) and writes `.state/social/days/<date>.json` (and, while the day is incomplete, `<date>.partial.json`). Retries, fails over, and always exits. |
 | `lib/social.js` | Pure logic for the boards: day selection, account pool, guardrail eligibility (label normalization), ranking, controversial bounds, follower-snapshot deltas, top-post filtering, posts-this-month scan, validation of the published payload. No I/O. |
-| `scripts/build-social.js` | Builds `data/social.js`, `data/social/pool.json` and `data/social/followers-history.json` from the day files, the AppView, Constellation and the PLC directory. Writes nothing if validation fails or any profile or post batch fails. |
+| `scripts/build-social.js` | Builds `data/social.js`, `.state/social/pool.json` and `.state/social/followers-history.json` from the day files, the AppView, Constellation and the PLC directory. Writes nothing if validation fails or any profile or post batch fails; with no day files it warns, keeps the existing `data/social.js` and exits 0. Env: `DATA_DIR`, `STATE_DIR`. |
 | `scripts/backfill-users.js` | One-time, re-runnable builder of `data/users-samples.json` from all historical sources (cache in `.cache/`, gitignored). |
 | `scripts/sample-plc-rates.js` | Samples Bluesky-hosted DID creation rates from plc.directory for 2024-07 → 2024-11. |
 | `scripts/verify-dashboard.py` | Playwright end-to-end harness (see "Verification"). |
 | `data/bluesky-data.js` | The archive the page loads (generated, one row per line). |
 | `data/bluesky-daily.csv` | The same rows as CSV; the downloadable dataset. |
 | `data/accounts-daily.json` | Own account count, one row per UTC day (active, deactivated, taken down, …). |
-| `data/social/days/` | Jetstream day files (contract A), one per UTC day, newest 35 kept, plus a `<date>.partial.json` sidecar for each day that is not yet complete. Written by the collector. |
-| `data/social/pool.json` | The account pool: DIDs seen near the top of the day files, with cached handle, followers, PDS host, creation date and all-time block count. Pruned after 60 days unseen under 10K followers, capped at 6,000. |
-| `data/social/followers-history.json` | One follower snapshot per UTC date (accounts with 10K+ followers), newest 35. The baseline for gainers and losers. |
+| `.state/social/days/` | Jetstream day files (contract A), one per UTC day, newest 35 kept, plus a `<date>.partial.json` sidecar for each day that is not yet complete. Written by the collector. **Not in git** (gitignored, kept in the Actions cache): they name small accounts by DID. |
+| `.state/social/pool.json` | Not in git. The account pool: DIDs seen near the top of the day files, with cached handle, followers, PDS host, creation date and all-time block count. Pruned after 60 days unseen under 10K followers, capped at 6,000. |
+| `.state/social/followers-history.json` | Not in git. One follower snapshot per UTC date (accounts with 10K+ followers), newest 35. The baseline for gainers and losers. |
 | `data/social.js` | The published social payload (contract B): `window.BLUESKY_SOCIAL`. Generated; the page loads it optionally. |
 | `data/users-samples.json` | Committed provenance: the user-count readings the series is built from. |
 | `data/sources/plc-rate-samples.json` | Committed PLC creation-rate samples used to shape 2024 gaps. |
 | `data/README.md` | Sources, credits, changes made and license notices for the data. |
 | `.github/workflows/count-accounts.yml` | 02:37 UTC own account count (Bluesky-operated and third-party hosts) → commit `data/accounts-daily.json`. |
-| `.github/workflows/collect-social.yml` | 03:00 and 09:00 UTC: collect → build → tests → commit `data/social` (day files and sidecars, pool, snapshots) and `data/social.js` (same rebase-and-push retry as the update). Own concurrency group `collect-social`. |
+| `.github/workflows/collect-social.yml` | 03:00 and 09:00 UTC: restore `.state/` from the Actions cache → collect → build → save the cache → tests → commit `data/social.js` only (same rebase-and-push retry as the update). Own concurrency group `collect-social`. |
 | `.github/workflows/update-data.yml` | Scheduled data update (update → tests → commit → push with one rebase retry). |
 | `.github/dependabot.yml` | Monthly updates of the SHA-pinned GitHub Actions. |
 | `.github/workflows/test.yml` | `npm test` on Node 22 and 24 for every push and pull request, plus a pre-render contract check. |
@@ -148,9 +152,10 @@ Every row has every key:
 | `dau` | Daily active users, lower bound: max of the non-flagged `likers`, `posters`, `followers`, `blockers`. Null when `likers` or `posters` is flagged. |
 | `flags` | Metric keys whose value is unreliable that day. **Consumers treat a flagged metric as missing**: a gap in charts, and excluded from moving averages, deltas, peaks, comparisons and ratios. |
 
-## Data contract: `data/social/days/YYYY-MM-DD.json` (contract A)
+## Data contract: `.state/social/days/YYYY-MM-DD.json` (contract A)
 
-One file per UTC day, written by `scripts/collect-social.js`, read by `scripts/build-social.js`. Several runs
+One file per UTC day (in `STATE_DIR/days/`, default `.state/social/days/`; never committed), written by
+`scripts/collect-social.js`, read by `scripts/build-social.js`. Several runs
 over different parts of a day merge into the same file (overlapping coverage, or a like/repost window
 sampled twice, is refused, never double counted).
 
@@ -162,7 +167,8 @@ sampled twice, is refused, never double counted).
  "follows_top":[["did:plc:…",1234]],
  "blocks_top":[["did:plc:…",987]],
  "post_candidates":[["at://did/app.bsky.feed.post/rkey",12,3]],
- "sample_windows":[["2026-10-08T00:30:00Z","2026-10-08T00:32:30Z"]]}
+ "sample_windows":[["2026-10-08T00:30:00Z","2026-10-08T00:32:30Z"]],
+ "errors":{"follows":0,"blocks":0,"posts":0}}
 ```
 
 | Field | Meaning |
@@ -173,11 +179,12 @@ sampled twice, is refused, never double counted).
 | `totals.likes_sampled`, `reposts_sampled`, `sample_seconds` | What the sampled like/repost windows saw, and how many seconds they really covered |
 | `follows_top`, `blocks_top` | `[subject DID, count]`, up to 3,000 each, descending (ties by DID). Gross: delete events carry no subject. |
 | `post_candidates` | `[post URI, likes in sample, reposts in sample]`, up to 1,000, ranked by likes. Only a candidate list; the exact counts come from the AppView at build time. |
-| `sample_windows` | `[start, end]` of each like/repost window already counted (24 of 150 s a day, scaled to the length of the piece collected). A later run skips candidate windows that overlap one, and merging refuses overlaps. A window that did not run to its end contributes nothing and is not listed. Day files written before this field existed are treated as the fixed schedule their `sample_seconds` imply. |
+| `sample_windows` | `[start, end]` of each like/repost window already counted (24 of 150 s a day, scaled to the length of the piece collected). A later run skips candidate windows that overlap one, and merging refuses overlaps. A window that did not run to its end contributes nothing and is not listed; one that ran to its end after a silence lists only the stretches that carry data (`sample_seconds` counts the same seconds), not the hole. Day files written before this field existed are treated as the fixed schedule their `sample_seconds` imply. |
+| `errors` | `{follows, blocks, posts}`: the most a true count can exceed what the file's list shows, from the cuts of the long lists in the sidecar. Written on every fold and **kept after the sidecar is deleted**. The builder adds `errors.follows` to a listed account's follows and to the cut of an unlisted one to bound the controversial ratio. Absent in files written before this field: unknown (not 0), and a file whose errors are unknown is folded without claiming any, so it stays unknown. |
 
 Events are bucketed by Jetstream `time_us` (when the network saw them), UTC. The newest 35 files are kept.
 
-### Partial sidecar: `data/social/days/YYYY-MM-DD.partial.json`
+### Partial sidecar: `.state/social/days/YYYY-MM-DD.partial.json`
 
 Merging two pieces of a day by summing their top-3,000 lists can reorder accounts near the cut: an account
 just under the cut in one piece loses its count. So while a day is incomplete (`complete: false`), the
@@ -192,16 +199,18 @@ collector also writes a sidecar with longer lists, and cuts the day file's lists
 ```
 
 - `follows` and `blocks` keep the top 12,000 subjects and `posts` the top 6,000 candidates. Measured
-  2026-10-09, one half day has roughly 600k distinct followed accounts, far too many to commit; 12,000 /
+  2026-10-09, one half day has roughly 600k distinct followed accounts, far too many to keep; 12,000 /
   12,000 / 6,000 keeps the file near a megabyte.
 - Stored counts are lower bounds. `error` is the most any subject's true count can exceed its stored count:
   it grows by the largest dropped count every time a list is cut. The day file only lists the top 3,000,
-  so this matters only for accounts within `error` of that cut.
-- It is committed because the 03:00 and 09:00 Actions are separate checkouts, and deleted as soon as the
-  day becomes complete (and pruned with its day file, or when no day file remains).
+  so this matters only for accounts within `error` of that cut. The day file copies the error as `errors`
+  (the error before the latest cut, which is what its own counts can be short by).
+- It is kept in the Actions cache (never in git: it names small accounts) because the 03:00 and 09:00
+  runs are separate checkouts, and deleted as soon as the day becomes complete (and pruned with its day
+  file, or when no day file remains).
 - It is trusted only if it describes exactly the day file on disk (same date, `covered_seconds` and
   `totals`); otherwise the next run falls back to the day file's own lists, with `error` set to the count
-  at their cut.
+  at their cut plus the `errors` the day file already carries.
 - `scripts/build-social.js` never reads it.
 
 ## Data contract: `data/social.js` (contract B)
@@ -222,7 +231,7 @@ window.BLUESKY_SOCIAL = {"schema":1, ...};
 | `guardrails` | `{min_followers: 10000, excluded_labels, adult_labels}`, stated on the page |
 | `accounts` | Map DID → `{handle, display_name, avatar, followers, follows, posts, posts_this_month, posts_this_month_capped, last_posted, created_at, pds, labels}`. Holds exactly the DIDs referenced by a board or a post. `posts_this_month` (own posts this UTC month, replies included, reposts excluded) is `null` if the feed scan failed, `posts_this_month_capped` is true when the scan stopped, with the month boundary still ahead, after 10 pages of 100 feed items that held own posts or 30 pages in all (so `posts_this_month` is then a lower bound), `last_posted`/`created_at`/`pds` can be `null`, `labels` is the list of label values on the profile, in normalized form (see "Guardrails"). |
 | `boards` | Twelve arrays of at most 25 rows each, eligible accounts only, ranked: `blocked_24h`, `blocked_7d`, `blocked_all`, `growing_24h`, `growing_7d`, `followed`, `gainers_24h`, `losers_24h`, `gainers_7d`, `losers_7d`, `controversial_24h`, `controversial_7d`. A row is `{did, value}`. Empty when the data does not exist yet (gainers and losers need a baseline snapshot). |
-| `boards.controversial_*` rows | `{did, value, blocks, follows, follows_below_cut?}`. `value` = blocks ÷ follows, 2 decimals; only accounts with 100+ blocks in the window, and accounts with no follows at all are skipped (the ratio is undefined). `follows_below_cut: true` (omitted otherwise) means the account was missing from at least one day's top-3,000 follow list: `follows` is then an upper bound (known counts plus the cut value of each day it is missing from, the smallest count of a full-length list; 0 for a list shorter than 3,000) and `value` a lower bound, rounded **down** so it never shows above the bound. Rows rank by `value`, then by the unrounded ratio. |
+| `boards.controversial_*` rows | `{did, value, blocks, follows, follows_below_cut?}`. `value` = blocks ÷ follows, 2 decimals; only accounts with 100+ blocks in the window, and accounts with no follows at all are skipped (the ratio is undefined). `follows_below_cut: true` (omitted otherwise) means the stored follow count may be short: the account was missing from a day's top-3,000 follow list, or that day's `errors.follows` is above 0. `follows` is then an upper bound: per day, a listed account's stored count plus `errors.follows`, an unlisted account's cut (the smallest count of a full-length list; 0 for a list shorter than 3,000) plus `errors.follows`. `value` is a lower bound, rounded **down** so it never shows above the bound. A day file without `errors` (written before they were recorded) has an unknown bound, so an account in a window that includes one is left off. Rows rank by `value`, then by the unrounded ratio. |
 | `top_posts` | At most 25, by `likes` descending: `{uri, url, author, text, created_at, likes, reposts, quotes, replies, embed?, labels?}`. `text` is at most 280 characters and is `""` when the post has none; `embed` (`image`, `video`, `quote` or `link`, from the AppView embed view; a quote with media reports the media) appears only when the post has one, and the page shows `[image]`, `[video]`, `[quote]` or `[link]` for a post with no text; `labels` (normalized post label values, record self-labels included) appears only when the post has any (never `!` or adult ones: those posts are dropped). The page shows the top 10. |
 | `totals` | `{follows_24h, blocks_24h}`: all follows and blocks counted on `day` |
 
@@ -246,6 +255,12 @@ every referenced DID has an account; the builder throws before writing anything 
 `script.js` applies the same rules again when rendering. Avatars are enforced in the page only: it loads an
 `avatar` URL only if it is `https://cdn.bsky.app/…` without credentials or a port, and otherwise draws a
 blank placeholder.
+
+Privacy follows from the same rule: the page names only eligible accounts, so nothing that lists others may
+sit in the public repository. The day files (top 3,000 follows and blocks per day by DID), their 12,000-long
+sidecars, `pool.json` (handles of everyone near a board) and `followers-history.json` therefore live in the
+git-ignored `.state/` and in the Actions cache, never in a commit. Only `data/social.js`, which the builder
+has already filtered and validated, is committed.
 
 ### Build details (`scripts/build-social.js`)
 
@@ -275,7 +290,7 @@ blank placeholder.
   own post has been seen, for `last_posted`). Reposts never use up the page cap: the count is capped only
   after 10 pages that held own posts, or 30 pages in all, with the month boundary still ahead.
 
-### `data/social/pool.json` and `data/social/followers-history.json`
+### `.state/social/pool.json` and `.state/social/followers-history.json`
 
 ```json
 {"schema":1,"updated_at":"ISO","accounts":{"did:plc:…":{"last_seen":"2026-10-08","handle":"…","followers":123456,
@@ -284,8 +299,9 @@ blank placeholder.
 {"schema":1,"snapshots":[{"at":"ISO","followers":{"did:plc:…":123456}}]}
 ```
 
-Both are caches and state, not published API: the pool lets the next build skip PLC and Constellation calls,
-and the snapshots are the only record of past follower counts, so deleting `followers-history.json` restarts
+Both are caches and state, not published API, and like the day files they stay out of git (the pool holds
+handles of everyone who came near a board): the pool lets the next build skip PLC and Constellation calls,
+and the snapshots are the only record of past follower counts, so losing `followers-history.json` restarts
 gainers and losers from nothing.
 
 ## Third-party count (`third_party` on `own_count.rows`)
@@ -438,15 +454,23 @@ node lib/prerender.js --data other.js --index /tmp/index.html --sitemap /tmp/sit
   the row as `own_count` in `data/bluesky-data.js` (`{source, rows, net}`; `net` is the change between
   consecutive complete runs scaled to 24h).
 - `collect-social.yml` runs at 03:00 and 09:00 UTC: `scripts/collect-social.js` → `scripts/build-social.js`
-  → `npm test` → commit `data/social` and `data/social.js` (job timeout 90 minutes). The 03:00 run collects
+  → `npm test` → commit `data/social.js` (job timeout 120 minutes, above the 60 + 25 minute step budgets
+  plus setup, tests and push). The raw state (`.state/`: day files, sidecars, pool, snapshots) is restored
+  with `actions/cache/restore` (key `social-state-<run id>`, restore-keys `social-state-`) before collecting
+  and saved with `actions/cache/save` right after the build (`if: !cancelled()`), so a failed test or push
+  still keeps the collected pieces. It is a cache, not git, for privacy: the files name accounts below the
+  10K line by DID and the repository is public, while Actions caches are not publicly downloadable.
+  GitHub evicts a cache entry not used for 7 days; the daily runs keep it warm, and losing it only
+  shortens the 7d and gainers and losers history (an empty state makes the builder warn, keep the existing
+  `data/social.js` and exit 0). The first run on an empty cache starts from scratch. The 03:00 run collects
   yesterday in full: Jetstream keeps about 36 hours of replay, so the start of yesterday is ~27 hours back
   and there are ~9 hours of slack (`lib/jetstream.js` keeps a 2-hour margin). The 09:00 run is a free retry,
   since the collector only fills time the day file does not cover. The workflow has its own concurrency group
   (`collect-social`): GitHub keeps one pending run per group, so sharing `update-data` would let the 03:17
-  update replace a collection queued behind a long 02:37 count. It commits only `data/social*` (day files
-  and their `.partial.json` sidecars included), which the other workflows never touch, so concurrent pushes
-  rebase cleanly. The collect and build steps use `continue-on-error`: a failure of either still lets the
-  tests and the commit run (partial day files are saved piece by piece), and a final step then fails the
+  update replace a collection queued behind a long 02:37 count. It commits only `data/social.js`,
+  which the other workflows never touch, so concurrent pushes rebase cleanly. The commit runs only
+  when the tests passed. The collect and build steps use `continue-on-error`: a failure of either still lets
+  the cache save, the tests and the commit run (partial day files are saved piece by piece), and a final step then fails the
   job so the problem is visible. The commit follows the same rebase-and-push retry as the update.
 - Collector connection policy (`replay` in `scripts/collect-social.js`, `lib/jetstream.js`): one connection
   for the follow/block pass and one at a time for the like/repost windows. A connection that delivers
@@ -463,7 +487,7 @@ node lib/prerender.js --data other.js --index /tmp/index.html --sitemap /tmp/sit
   file). The run stays green and the next run fills the gap while the data is still in Jetstream's
   retention (at 09:00 the start of yesterday is 33 h back, inside the 34 h the collector allows).
 - The builder exits non-zero and writes nothing if a profile or `getPosts` batch still fails after its retry,
-  or validation fails; the previous `data/social.js` stays.
+  or validation fails; the previous `data/social.js` stays (as it does when there are no day files at all).
 - The Action runs at 03:17 and 15:17 UTC. jazco's previous UTC day is about 99.9% final by 02:30 UTC; the
   second run adds user-count samples and picks up late revisions. GitHub may start scheduled runs late.
 - The checkout is the branch head (`ref: ${{ github.ref }}`), not the triggering commit, so a run that
@@ -483,7 +507,7 @@ node lib/prerender.js --data other.js --index /tmp/index.html --sitemap /tmp/sit
 ## Verification
 
 - `npm test` runs every `test/*.test.js` file with `node:test`. The tests never touch the real files or
-  network (the updater takes `DATA_DIR`, `INDEX_FILE`, `SITEMAP_FILE`, `NOW` and an injectable `fetch`).
+  network (the updater takes `DATA_DIR`, `INDEX_FILE`, `SITEMAP_FILE`, `NOW` and an injectable `fetch`; the social scripts take `DATA_DIR` and `STATE_DIR`, which the tests point at temp directories).
 - `scripts/verify-dashboard.py` drives the real page in Chromium: `doctor`, `smoke`, `ranges`, `compare`,
   `toggles`, `waves`, `exports`, `guide`, `keyboard`, `live`, `social`, `all`. It serves the repo on a free port
   (or uses `--url`), intercepts the Bluesky feed so `live` can force LIVE, ARCHIVE, failure, garbage and

@@ -38,9 +38,9 @@ the data and commit it: the main data twice a day, the social data twice a day (
   line). Keys: `1`–`8` ranges, `M` average, `L` log, `C` compare, `?` guide. The state is kept in the
   URL, e.g. `#r=1Y&ma=1&log=0&cmp=0`, so a view can be shared.
 - **Leaderboards `LDR`**: top 25 accounts for each board, with followers, posts, posts this month, last
-  post, account age and PDS host. **Top posts `PST`**: the most-liked posts of the latest complete UTC
-  day. **Decentralization `DEC`**: the share of active accounts on servers Bluesky does not run. See
-  "Leaderboards and social data" below.
+  post, account age and PDS host. **Top posts `PST`**: the most-liked posts of the newest complete UTC
+  day, or the newest partial day until one exists. **Decentralization `DEC`**: the share of active
+  accounts on servers Bluesky does not run. See "Leaderboards and social data" below.
 - **Data table** of the last 30 days in the range, a link to the full CSV, milestones, FAQ, definitions,
   sources and a guide dialog that explains every control.
 
@@ -116,11 +116,14 @@ AppView, Constellation and the PLC directory, collected by `.github/workflows/co
   daily snapshots, so unfollows are included.
 - **Most controversial** (`24H`, `7D`): blocks received ÷ follows received in the window, for accounts with
   at least 100 blocks in the window. Accounts that received no follows are skipped (the ratio is
-  undefined). Each day file lists only the top 3,000 accounts by follows; when an account is missing
-  from a day's list, its follows are bounded above by that day's cut value (the smallest count in the
-  list), so the ratio is a lower bound, rounded down and shown as "≥ ratio" with "≤ N follows".
-- **Top posts of the day**: posts created on the latest complete UTC day, ranked by exact `likeCount`
-  (AppView `getPosts`). Candidates come from sampled like and repost windows of the Jetstream (24 windows
+  undefined). Each day file lists only the top 3,000 accounts by follows, and its counts can be short by
+  the day's recorded error (see "Known limits"). The follows used are therefore a ceiling: a listed
+  account gets its stored count plus the error, an account missing from the list gets that day's cut
+  value (the smallest count in the list) plus the error. Whenever the ceiling is above the stored count
+  the ratio is a lower bound, rounded down and shown as "≥ ratio" with "≤ N follows". A day file written
+  before errors were recorded has an unknown ceiling, so a window that includes one shows no ratios.
+- **Top posts of the day**: posts created on the newest complete UTC day, or the newest partial day until
+  one exists, ranked by exact `likeCount` (AppView `getPosts`). Candidates come from sampled like and repost windows of the Jetstream (24 windows
   of 150 s a day; the 1,000 most-liked posts of the samples are looked up), so a post that was never in a
   sampled window can be missed. The data file holds up to 25 posts and the page shows the top 10. A post
   with no text shows `[image]`, `[video]`, `[quote]` or `[link]` instead, according to its embed.
@@ -155,6 +158,12 @@ Enforced in `scripts/build-social.js` and `lib/social.js`, and checked again in 
   port); anything else shows a blank placeholder.
 - The build refuses to write `data/social.js` if any listed account or post breaks these rules, and the
   page applies the rules again when it renders.
+- **Privacy: the raw state is never committed.** The Jetstream day files (the top 3,000 accounts by
+  follows and blocks per day, by DID), the 12,000-long sidecars, the account pool (handles of everyone
+  who came near a board) and the follower history include accounts far below the 10K line, so they would
+  defeat the guardrail in a public repo. They live in `.state/social/` (git-ignored; `STATE_DIR`
+  overrides it) and travel between runs in the GitHub Actions cache, which is not publicly downloadable.
+  Only `data/social.js`, already filtered to eligible accounts and validated, is committed.
 
 ### Sources
 
@@ -175,10 +184,15 @@ Enforced in `scripts/build-social.js` and `lib/social.js`, and checked again in 
 `collect-social.yml` runs at **03:00 and 09:00 UTC**. The 03:00 run collects yesterday in full, which
 Jetstream's roughly 36-hour replay allows with hours to spare; the 09:00 run is a free retry, because the
 collector only fills time the day file does not cover yet. After each collection the same job rebuilds
-`data/social.js`, runs the tests and commits `data/social/` and `data/social.js`. It has its own
+`data/social.js`, runs the tests and commits `data/social.js`, the only file it commits. The raw state
+(`.state/`) is restored from the Actions cache before collecting and saved to it right after the build,
+under a new key per run (`social-state-<run id>`, restored by prefix). GitHub evicts a cache that has not
+been used for 7 days; the daily runs keep it warm, and losing it only shortens the 7-day and gainers and
+losers history (the builder starts again from the next day files; with no day files at all it warns, keeps
+the existing `data/social.js` and exits 0 rather than publish an empty board). The job has its own
 concurrency group (`collect-social`), so the other workflows can't delay or replace it; it commits only
-files they never touch. If collection or the build
-fails, whatever was collected is still committed and the run is marked failed.
+a file they never touch. If collection or the build fails, whatever was collected is still saved to the
+cache and the run is marked failed.
 
 The collector never hangs a run. It retries a dropped connection on the same instance with backoff, then
 fails over to the next of the four instances (10 s cursor rewind, repeated commits dropped), and gives up
@@ -187,8 +201,8 @@ the next run fills it while Jetstream still has the data. It always ends the pro
 giving up, exit 1 only on a real error such as an unreadable file. While a day is incomplete, a
 `<date>.partial.json` file next to its day file keeps longer top lists (top 12,000 follows, 12,000 blocks
 and 6,000 posts, with error bounds) so a later run can merge into them without losing accounts that sit
-near the day file's cut of 3,000. It is committed because each Action run is a fresh checkout, and
-deleted as soon as the day is complete.
+near the day file's cut of 3,000. It is kept in the Actions cache because each Action run is a fresh
+checkout, and deleted as soon as the day is complete; the day file keeps the error bounds (`errors`).
 
 ### First run and warm-up
 
@@ -198,6 +212,8 @@ deleted as soon as the day is complete.
   the 7-day board one taken 6 to 8 days earlier. Until then they stay empty.
 - The **7-day** blocks, growth and controversial boards sum the day files available, so they cover fewer
   than 7 days for the first week (the file records how many in `coverage.days_7d`).
+- The first run with an empty Actions cache starts with no history at all: one day file, no follower
+  snapshots, no pool. The boards fill in as the days accumulate, as above.
 - Day files older than the newest 35 are deleted, with their partial sidecars. Jetstream cannot replay
   more than about 36 hours, so a day that was missed cannot be recovered later.
 
@@ -259,7 +275,7 @@ GitHub Action (03:17 and 15:17 UTC)
 GitHub Action (02:37 UTC)
   node scripts/count-accounts.js → commit data/accounts-daily.json
 GitHub Action (03:00 and 09:00 UTC)
-  node scripts/collect-social.js → node scripts/build-social.js → npm test → commit data/social*
+  node scripts/collect-social.js → node scripts/build-social.js → npm test → commit data/social.js (state in the Actions cache)
 Browser
   index.html (numbers already filled in) → lib/format.js → data/bluesky-data.js, data/social.js → script.js
 ```
@@ -305,8 +321,8 @@ npm run prerender      # re-render index.html and sitemap.xml from the committed
 ### Collect the social data
 
 ```bash
-node scripts/collect-social.js     # yesterday (UTC), minus what data/social/days/<date>.json already covers
-node scripts/build-social.js       # data/social.js, data/social/pool.json, data/social/followers-history.json
+node scripts/collect-social.js     # yesterday (UTC), minus what .state/social/days/<date>.json already covers
+node scripts/build-social.js       # data/social.js, .state/social/pool.json, .state/social/followers-history.json
 node scripts/count-accounts.js     # own account count + third-party hosts → data/accounts-daily.json (~8 to 35 min)
 ```
 
@@ -315,7 +331,8 @@ node scripts/count-accounts.js     # own account count + third-party hosts → d
 minutes to replay and can only reach back about 36 hours. `collect-social.js` also reads `JETSTREAM_HOSTS`
 (comma list of instances). `build-social.js` calls the live AppView, Constellation and PLC directory and
 takes several minutes; it fails, writing nothing, if any profile or post batch still fails after a retry.
-Both honour `DATA_DIR` (copy `data/` somewhere first for a trial run). `count-accounts.js` also reads
+`DATA_DIR` (default `data/`) is where `social.js` goes, `STATE_DIR` (default `.state/social`, git-ignored)
+holds the raw state; point both somewhere else for a trial run. `count-accounts.js` also reads
 `SKIP_THIRD_PARTY=1` (Bluesky hosts only) and `ONLY_THIRD_PARTY=1` (only the third-party pass, merged into
 the newest row), plus `THIRD_PARTY_BUDGET_MIN` (default 25). All three send a User-Agent that links back
 here.
@@ -390,8 +407,14 @@ uses the installed Google Chrome. Screenshots land in `artifacts/verify/`.
   part, so they are a floor.
 - Each day file keeps the top 3,000 accounts per list. While a day is incomplete the partial sidecar keeps
   12,000, so merging runs rarely loses anything, but an account within the sidecar's error bound of the cut
-  can still be undercounted (and more so if the sidecar is lost). The controversial ratio of an account that
-  is not in a day's follow list is only a lower bound (`follows_below_cut`).
+  can still be undercounted (and more so if the sidecar is lost). The day file keeps that error bound
+  (`errors`) after the sidecar is gone, and the controversial ratio uses it: the follows are a ceiling
+  (stored count or cut, plus the error), so the ratio is only a lower bound (`follows_below_cut`) whenever
+  that ceiling is above what was stored. Day files from before the error was recorded are treated as
+  unknown, which keeps their accounts off the controversial boards instead of guessing.
+- The raw social state lives in the GitHub Actions cache. GitHub evicts a cache unused for 7 days; losing it
+  shortens the 7-day and gainers and losers history and nothing else, and an empty state never overwrites a
+  published `data/social.js`.
 - Top posts are chosen from sampled like and repost windows, so a post that got its likes between samples
   can be missed. Their like counts are exact.
 - Jetstream replays about 36 hours. A day that was not collected in that time stays missing, and the 24-hour

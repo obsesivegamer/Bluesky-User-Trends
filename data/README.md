@@ -9,23 +9,28 @@ and `scripts/build-social.js` (see `docs/ARCHITECTURE.md` for the formats):
 | `bluesky-data.js` | The same rows as the page loads them (`window.BLUESKY_DATA`). |
 | `accounts-daily.json` | Our own daily count of accounts on Bluesky-operated PDS hosts, by status, from `com.atproto.sync.listRepos` (public AT Protocol API). Rows may also carry `third_party`, the count of active accounts on all other PDS hosts the relay lists (and on Bridgy Fed; hostnames that list the same accounts count once, a host counts up to 1,000,000 active accounts), behind the decentralization meter. Hosts that failed are missing from it. |
 | `social.js` | The leaderboards and top posts the page loads (`window.BLUESKY_SOCIAL`): up to 25 rows per board, each listed account's public profile fields, and up to 25 top posts. |
-| `social/days/YYYY-MM-DD.json` | One Jetstream day file: follows and blocks received per account DID (top 3,000 each), plus sampled like/repost counts per post and the sample windows they cover. The newest 35 days are kept. |
-| `social/days/YYYY-MM-DD.partial.json` | Working state for a day that is not complete yet: longer top lists (12,000 follows, 12,000 blocks, 6,000 posts) with error bounds, so a later collection run can merge into them. Deleted when the day is complete. Not read by the page or by `social.js`. |
-| `social/pool.json` | Working state for `social.js`: the DIDs recently seen near the top of the day files, with cached handle, follower count, PDS host, creation date and all-time block count. |
-| `social/followers-history.json` | One follower-count snapshot per UTC date for accounts with 10K+ followers (the baseline for gainers and losers). |
 | `users-samples.json` | The timestamped user-count readings the daily series is built from. |
 | `sources/plc-rate-samples.json` | PLC directory account-creation rates, used only to shape the 2024 gaps. |
 
 The data is derived from the sources below and stays under their terms. If you reuse it, credit them.
 
-`social.js`, `social/pool.json` and `social/followers-history.json` name accounts: handles, display names,
+`social.js` names accounts: handles, display names,
 avatar links, follower counts and post text are public Bluesky profile and post data, shown for accounts
 with at least 10,000 followers that carry no label starting with `!` (opt-out or moderation; compared
 after Unicode normalization and lowercasing), with adult and graphic-labelled posts left out. Avatar links
 are taken from the AppView as given; the page loads them from `cdn.bsky.app` only. They are not covered by this repository's MIT license. If you reuse
 them, keep the guardrails, and note that a profile or post may have changed or been deleted since the
-build. `pool.json` and `followers-history.json` also hold DIDs and follower counts of accounts under the
-10K cut or with labels, which the page never shows; they are working state, not a dataset.
+build.
+
+The raw working state of the social build is **not in this repository**. The Jetstream day files (follows
+and blocks received per account DID, top 3,000 each per day, plus sampled like/repost counts and the sample
+windows), their `.partial.json` sidecars (12,000 follows, 12,000 blocks, 6,000 posts, with error bounds),
+`pool.json` (handles, follower counts, PDS host and all-time blocks of everyone who came near a board) and
+`followers-history.json` (daily follower snapshots) include accounts under the 10K cut and accounts with
+`!` labels, whom the page never names. Publishing them in a public repository would defeat that guardrail,
+so they live in the git-ignored `.state/social/` and, in the Action, in the GitHub Actions cache (not
+publicly downloadable; evicted after 7 days unused, which only shortens the 7-day and gainers and losers
+history). `social.js` is the only social file committed: already filtered and validated.
 
 ## Sources
 
@@ -57,7 +62,7 @@ build. `pool.json` and `followers-history.json` also hold DIDs and follower coun
 - **Jetstream** ([bluesky-social/jetstream](https://github.com/bluesky-social/jetstream)), the public JSON
   stream of the AT Protocol network, read from Bluesky's public instances
   (`jetstream1/2.us-east/us-west.bsky.network`) with the replay cursor. Source of the follow and block
-  counts in `social/days/` and of the like/repost samples that nominate top-post candidates. Delete events
+  counts in the day files (`.state/social/days/`, not committed) and of the like/repost samples that nominate top-post candidates. Delete events
   carry no subject, so the counts are gross (unfollows and unblocks are not subtracted). Events are
   bucketed by the time the stream saw them, UTC. About 36 hours can be replayed. If one instance drops
   the connection, the collector retries it, then switches to another and drops repeated commits.

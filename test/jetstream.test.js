@@ -575,7 +575,7 @@ test('review 7: gives up after exactly MAX_FAILURES fruitless connections; progr
 
 test('review 7: pruning runs even when the run does nothing, and the process exits on its own', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'collect-social-'));
-  const days = path.join(dir, 'social', 'days');
+  const days = path.join(dir, 'days');
   fs.mkdirSync(days, { recursive: true });
   const yesterday = js.isoDate(Date.now() - js.DAY_MS);
   const w = js.dayWindow(yesterday);
@@ -585,7 +585,7 @@ test('review 7: pruning runs even when the run does nothing, and the process exi
   for (let i = 0; i < 36; i++) old.push(js.isoDate(ms('2026-01-01T00:00:00Z') + i * js.DAY_MS));
   for (const d of old) fs.writeFileSync(path.join(days, `${d}.json`), '{}');
   fs.writeFileSync(path.join(days, `${old[0]}.partial.json`), '{}');
-  const env = { ...process.env, DATA_DIR: dir };
+  const env = { ...process.env, STATE_DIR: dir };
 
   const covered = spawnSync(process.execPath, [SCRIPT], { env, encoding: 'utf8', timeout: 20000 });
   assert.equal(covered.status, 0, covered.stderr);
@@ -713,7 +713,7 @@ test('review 3: a stale or foreign sidecar is ignored; a day file with no sideca
 
 test('review 3: the fields the board builder reads are unchanged', () => {
   const r = js.foldPiece(D, null, null, pieceResult({ from: `${D}T00:00:00Z`, to: `${D}T06:00:00Z`, follows: { 'did:plc:x': 2 }, likes: { [post(1)]: 3 } }));
-  assert.deepEqual(Object.keys(r.file), ['schema', 'date', 'window', 'complete', 'totals', 'follows_top', 'blocks_top', 'post_candidates', 'sample_windows']);
+  assert.deepEqual(Object.keys(r.file), ['schema', 'date', 'window', 'complete', 'totals', 'follows_top', 'blocks_top', 'post_candidates', 'sample_windows', 'errors']);
   assert.deepEqual(Object.keys(r.file.totals), ['follows', 'blocks', 'likes_sampled', 'reposts_sampled', 'sample_seconds']);
   assert.deepEqual(r.file.follows_top, [['did:plc:x', 2]]);
   assert.deepEqual(r.file.post_candidates, [[post(1), 3, 0]]);
@@ -740,9 +740,9 @@ test('review 4: the day file records the windows it sampled; unfinished windows 
   assert.deepEqual([...p.likes], [[post(1), 2]]);
   assert.equal(p.nLikes, 2);
   assert.equal(p.sampleMs, 2000, 'only what the finished window observed');
-  assert.deepEqual(p.windows, [[base, base + 150e3]]);
+  assert.deepEqual(p.windows, [[base, base + 2000]], 'and only that stretch is recorded as sampled');
   const f = js.buildDayFile(D, { startMs: at('12:00:00'), endMs: at('13:00:00'), gaps: [], follows: new Map(), blocks: new Map(), nFollows: 0, nBlocks: 0, posts: p });
-  assert.deepEqual(f.sample_windows, [[`${D}T12:28:45Z`, `${D}T12:31:15Z`]]);
+  assert.deepEqual(f.sample_windows, [[`${D}T12:28:45Z`, `${D}T12:28:47Z`]]);
 });
 
 test('review 4: a refill of a follow gap skips windows that are already counted', () => {

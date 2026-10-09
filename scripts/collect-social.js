@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Replays Jetstream history for one UTC day (or a part of it) and writes data/social/days/<date>.json:
+// Replays Jetstream history for one UTC day (or a part of it) and writes <STATE_DIR>/days/<date>.json:
 // follow/block counts per subject DID over the whole window, plus sampled like/repost windows for
 // top-post candidates. Several runs over different parts of a day merge into the same file.
 //
@@ -8,15 +8,16 @@
 //
 // Default: yesterday (UTC), minus whatever the existing day file already covers. Jetstream keeps
 // ~36h of replay, so the start is pulled forward to stay inside it (see lib/jetstream.js).
-// Env: DATA_DIR (default ./data), JETSTREAM_HOSTS (comma list, e.g. jetstream2.us-east).
+// Env: STATE_DIR (default ./.state/social, git-ignored: the day files name small accounts by DID, so they
+// never go into git), JETSTREAM_HOSTS (comma list, e.g. jetstream2.us-east).
 
 const fs = require('fs');
 const path = require('path');
 const js = require('../lib/jetstream.js');
 
 const UA = 'Bluesky-User-Trends (+https://github.com/obsesivegamer/Bluesky-User-Trends)';
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-const DAYS_DIR = path.join(DATA_DIR, 'social', 'days');
+const STATE_DIR = process.env.STATE_DIR || path.join(__dirname, '..', '.state', 'social');
+const DAYS_DIR = path.join(STATE_DIR, 'days');
 const HOSTS = process.env.JETSTREAM_HOSTS ? process.env.JETSTREAM_HOSTS.split(',').map((h) => h.trim()) : js.HOSTS;
 const IDLE_MS = 30e3;
 const CLOSE_TIMEOUT_MS = 3e3;

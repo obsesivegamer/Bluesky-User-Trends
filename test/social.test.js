@@ -637,6 +637,7 @@ function dayFile(date, complete, over = {}) {
     follows_top: [],
     blocks_top: [],
     post_candidates: [],
+    errors: { follows: 0, blocks: 0, posts: 0 },
     ...over,
   };
 }
@@ -705,7 +706,7 @@ function makeNetwork({ failProfiles = false, failConstellation = false, extraPro
 
 function setupDir(extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'social-test-'));
-  const days = path.join(dir, 'social', 'days');
+  const days = path.join(dir, 'state', 'days');
   const f1 = dayFile('2026-10-08', true, {
     follows_top: [[BIG.alice, 300], [BIG.dave, 200], [BIG.bob, 40]],
     blocks_top: [[BIG.carol, 900], [BIG.bob, 120], [BIG.alice, 50]],
@@ -721,13 +722,13 @@ function setupDir(extra = {}) {
   ];
   writeJson(path.join(days, '2026-10-08.json'), f1);
   writeJson(path.join(days, '2026-10-09.json'), f2);
-  if (extra.history) writeJson(path.join(dir, 'social', 'followers-history.json'), extra.history);
-  if (extra.pool) writeJson(path.join(dir, 'social', 'pool.json'), extra.pool);
+  if (extra.history) writeJson(path.join(dir, 'state', 'followers-history.json'), extra.history);
+  if (extra.pool) writeJson(path.join(dir, 'state', 'pool.json'), extra.pool);
   return dir;
 }
 
 const run = (dir, net, env = {}) => main({
-  env: { DATA_DIR: dir, NOW: NOW_ISO, ...env },
+  env: { DATA_DIR: dir, STATE_DIR: path.join(dir, 'state'), NOW: NOW_ISO, ...env },
   fetchImpl: net.fetchImpl,
   sleep: async () => {},
   log: () => {},
@@ -804,7 +805,7 @@ test('end to end: boards, guardrails, posts, metadata and files from mocked netw
   assert.equal(out.accounts[BIG.hank].created_at, '2022-02-02T00:00:00.000Z', 'missing createdAt falls back to the PLC audit log');
   assert.deepEqual(out.accounts[BIG.gina].labels, ['porn']);
 
-  const pool = JSON.parse(fs.readFileSync(path.join(dir, 'social', 'pool.json'), 'utf8'));
+  const pool = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'pool.json'), 'utf8'));
   assert.equal(pool.schema, 1);
   assert.ok(pool.accounts[BIG.carol], 'ineligible accounts stay in the pool');
   assert.equal(pool.accounts[BIG.carol].followers, 5000);
@@ -812,7 +813,7 @@ test('end to end: boards, guardrails, posts, metadata and files from mocked netw
   assert.equal(pool.accounts[BIG.bob].blocks_all.at, '2026-10-10T04:00:00.000Z');
   assert.equal(pool.accounts[BIG.alice].last_seen, '2026-10-09');
 
-  const hist = JSON.parse(fs.readFileSync(path.join(dir, 'social', 'followers-history.json'), 'utf8'));
+  const hist = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'followers-history.json'), 'utf8'));
   assert.equal(hist.snapshots.length, 3);
   assert.equal(hist.snapshots[2].at, '2026-10-10T04:00:00.000Z');
   assert.equal(hist.snapshots[2].followers[BIG.alice], 500000);
@@ -839,19 +840,19 @@ test('end to end: first run has no snapshots, so movers are empty; a rerun withi
   assert.equal(net2.calls.filter((u) => u.includes('plc.directory') && !u.includes('audit')).length, 0, 'PDS hosts come from the pool cache');
   const second = readSocial(dir);
   assert.deepEqual(second.boards.blocked_all, first.boards.blocked_all);
-  const hist = JSON.parse(fs.readFileSync(path.join(dir, 'social', 'followers-history.json'), 'utf8'));
+  const hist = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'followers-history.json'), 'utf8'));
   assert.equal(hist.snapshots.length, 1, 'one snapshot per UTC date');
   fs.rmSync(dir, { recursive: true });
 });
 
 test('end to end: only partial days -> newest day, complete_24h false', async () => {
   const dir = setupDir();
-  const f = JSON.parse(fs.readFileSync(path.join(dir, 'social', 'days', '2026-10-09.json'), 'utf8'));
+  const f = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'days', '2026-10-09.json'), 'utf8'));
   f.complete = false;
-  writeJson(path.join(dir, 'social', 'days', '2026-10-09.json'), f);
-  const g = JSON.parse(fs.readFileSync(path.join(dir, 'social', 'days', '2026-10-08.json'), 'utf8'));
+  writeJson(path.join(dir, 'state', 'days', '2026-10-09.json'), f);
+  const g = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'days', '2026-10-08.json'), 'utf8'));
   g.complete = false;
-  writeJson(path.join(dir, 'social', 'days', '2026-10-08.json'), g);
+  writeJson(path.join(dir, 'state', 'days', '2026-10-08.json'), g);
   await run(dir, makeNetwork());
   const out = readSocial(dir);
   assert.equal(out.day, '2026-10-09');
@@ -864,8 +865,8 @@ test('end to end: essential AppView failure exits with an error and writes nothi
   const dir = setupDir();
   await assert.rejects(run(dir, makeNetwork({ failProfiles: true })), /profile batches failed/);
   assert.equal(fs.existsSync(path.join(dir, 'social.js')), false);
-  assert.equal(fs.existsSync(path.join(dir, 'social', 'pool.json')), false);
-  assert.equal(fs.existsSync(path.join(dir, 'social', 'followers-history.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'state', 'pool.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'state', 'followers-history.json')), false);
   fs.rmSync(dir, { recursive: true });
 });
 
@@ -878,16 +879,18 @@ test('end to end: Constellation outage is not fatal; blocked_all is just empty',
   fs.rmSync(dir, { recursive: true });
 });
 
-test('end to end: no day files is an error and writes nothing', async () => {
+test('end to end: no day files keeps the existing social.js and exits cleanly', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'social-test-'));
-  await assert.rejects(run(dir, makeNetwork()), /no day files/);
-  assert.equal(fs.existsSync(path.join(dir, 'social.js')), false);
+  const good = 'window.BLUESKY_SOCIAL = {"keep":"me"};\n';
+  fs.writeFileSync(path.join(dir, 'social.js'), good);
+  await run(dir, makeNetwork());
+  assert.equal(fs.readFileSync(path.join(dir, 'social.js'), 'utf8'), good);
   fs.rmSync(dir, { recursive: true });
 });
 
 test('end to end: accounts missing from a full-length follows list get a ceiling, not 0 follows', async () => {
   const dir = setupDir();
-  const days = path.join(dir, 'social', 'days');
+  const days = path.join(dir, 'state', 'days');
   const f2 = JSON.parse(fs.readFileSync(path.join(days, '2026-10-09.json'), 'utf8'));
   const keep = f2.follows_top.filter(([did]) => did !== BIG.bob && did !== BIG.hank);
   const filler = Array.from({ length: s.FOLLOWS_TOP_SIZE - keep.length }, (_, i) => [`did:plc:filler${i}`, 5]);
@@ -915,7 +918,7 @@ test('end to end: one failed profile batch among many is retried alone, and stil
   const fillers = manyProfiles(260);
   const withFillers = () => {
     const dir = setupDir();
-    const file = path.join(dir, 'social', 'days', '2026-10-09.json');
+    const file = path.join(dir, 'state', 'days', '2026-10-09.json');
     const f2 = JSON.parse(fs.readFileSync(file, 'utf8'));
     f2.follows_top.push(...Object.keys(fillers).map((did, i) => [did, 1 + (i % 7)]));
     writeJson(file, f2);
@@ -926,8 +929,8 @@ test('end to end: one failed profile batch among many is retried alone, and stil
   const net = makeNetwork({ extraProfiles: fillers, failProfilesFor: BIG.alice });
   await assert.rejects(run(dir, net), /profile batches failed after a retry/, '1 of 11 batches is under the old 10% tolerance and must still abort');
   assert.equal(fs.existsSync(path.join(dir, 'social.js')), false);
-  assert.equal(fs.existsSync(path.join(dir, 'social', 'pool.json')), false);
-  assert.equal(fs.existsSync(path.join(dir, 'social', 'followers-history.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'state', 'pool.json')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'state', 'followers-history.json')), false);
   const profileCalls = net.calls.filter((u) => u.includes('getProfiles') && u.includes(encodeURIComponent(BIG.alice))).length;
   assert.equal(profileCalls, 8, 'four client attempts, then four more in the single retry of that batch');
   fs.rmSync(dir, { recursive: true });
@@ -945,7 +948,7 @@ test('end to end: a failed getPosts batch aborts the build, and all 1000 candida
   const candidates = Array.from({ length: 990 }, (_, i) => [`at://did:plc:nobody${i}/app.bsky.feed.post/3x${i}`, 1, 0]);
   const setup = () => {
     const dir = setupDir();
-    const file = path.join(dir, 'social', 'days', '2026-10-09.json');
+    const file = path.join(dir, 'state', 'days', '2026-10-09.json');
     const f2 = JSON.parse(fs.readFileSync(file, 'utf8'));
     f2.post_candidates.push(...candidates);
     writeJson(file, f2);
@@ -973,7 +976,7 @@ test('end to end: a high-like post with empty text (image) is published and rank
       [imageUri]: post(BIG.hank, '3hankimage', { likeCount: 14018, record: { text: '', createdAt: '2026-10-09T11:00:00.000Z' }, indexedAt: '2026-10-09T11:00:01.000Z', embed: { $type: 'app.bsky.embed.images#view', images: [] } }),
     },
   });
-  const file = path.join(dir, 'social', 'days', '2026-10-09.json');
+  const file = path.join(dir, 'state', 'days', '2026-10-09.json');
   const f2 = JSON.parse(fs.readFileSync(file, 'utf8'));
   f2.post_candidates.push([imageUri, 1, 0]);
   writeJson(file, f2);
@@ -1012,7 +1015,7 @@ test('end to end: posts-this-month scan reads past pages of reposts instead of c
 test('end to end: Constellation attempts, retries included, stay within the 400 budget', async () => {
   const fillers = manyProfiles(300);
   const dir = setupDir();
-  const file = path.join(dir, 'social', 'days', '2026-10-09.json');
+  const file = path.join(dir, 'state', 'days', '2026-10-09.json');
   const f2 = JSON.parse(fs.readFileSync(file, 'utf8'));
   f2.blocks_top.push(...Object.keys(fillers).slice(0, 200).map((did, i) => [did, 150 + i]));
   f2.follows_top.push(...Object.keys(fillers).slice(200).map((did, i) => [did, 1 + (i % 5)]));
@@ -1030,7 +1033,7 @@ test('end to end: did:web accounts are resolved at the did:web method URL', asyn
   const web = 'did:web:example.com:users:alice';
   const extraProfiles = { [web]: profile(web, { handle: 'webalice.example.com', followersCount: 70000 }) };
   const dir = setupDir();
-  const file = path.join(dir, 'social', 'days', '2026-10-09.json');
+  const file = path.join(dir, 'state', 'days', '2026-10-09.json');
   const f2 = JSON.parse(fs.readFileSync(file, 'utf8'));
   f2.blocks_top.push([web, 5000]);
   writeJson(file, f2);

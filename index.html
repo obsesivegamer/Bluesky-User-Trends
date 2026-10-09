@@ -609,7 +609,7 @@
                         <span class="scale-tag" id="pst-asof">NO DATA</span>
                     </div>
                 </div>
-                <p class="chart-subtitle" id="pst-subtitle">The 10 most-liked posts created on the latest complete UTC day, by accounts with 10K+ followers. Like counts are exact; candidates come from a sample of the like and repost stream, so a post can be missed.</p>
+                <p class="chart-subtitle" id="pst-subtitle">The 10 most-liked posts created on the newest complete UTC day (or the newest partial day until one exists), by accounts with 10K+ followers. Like counts are exact; candidates come from a sample of the like and repost stream, so a post can be missed.</p>
                 <ul class="social-notes" id="pst-caveats" hidden></ul>
                 <p class="social-empty" id="pst-empty">Collecting — first data after the next daily run.</p>
                 <ol class="post-list" id="pst-list" hidden></ol>
@@ -885,7 +885,7 @@
                     <h3 id="g-social"><span class="guide-code" aria-hidden="true">LDR</span> Leaderboards, top posts &amp; decentralization</h3>
                     <ul class="guide-feature-list">
                         <li><strong>LDR &lt;GO&gt;</strong>: top 25 accounts for most blocked, fastest growing (follows received), most followed, net gainers and losers, and most controversial (blocks ÷ follows). Pick a board, then a window (24H, 7D; ALL only for blocks). Each row shows followers, posts, posts this month (own posts including replies, excluding reposts; shown with a + as a lower bound when counting stopped early), last post, account age and PDS host (Bluesky-hosted or third-party). On a phone only rank, account and the board metric are shown.</li>
-                        <li><strong>PST &lt;GO&gt;</strong>: the 10 most-liked posts created on the latest complete UTC day, with exact like, repost, quote and reply counts.</li>
+                        <li><strong>PST &lt;GO&gt;</strong>: the 10 most-liked posts created on the newest complete UTC day (or the newest partial day until one exists), with exact like, repost, quote and reply counts.</li>
                         <li><strong>DEC &lt;GO&gt;</strong>: the share of active accounts hosted on servers Bluesky does not run, split into independent PDS hosts and Bridgy Fed bridges.</li>
                         <li><strong>Sources</strong>: Jetstream (blocks, follows, likes), the Bluesky AppView (profiles, counts, posts), Constellation (all-time blocks, recorded since early 2025) and our own <code>listRepos</code> count. 24H and 7D block and follow counts are gross: unblocks and unfollows are not subtracted.</li>
                         <li><strong>Guardrails</strong>: only accounts with at least 10,000 followers and no opt-out or moderation labels are named. Posts with adult or graphic labels are skipped. Everyone else still counts toward the totals.</li>

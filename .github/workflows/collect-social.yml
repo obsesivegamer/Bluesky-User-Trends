@@ -15,14 +15,16 @@ permissions:
 concurrency:
   # Its own group, not update-data: GitHub keeps one pending run per group, so sharing it would let the
   # 03:17 data update replace a 03:00 collection queued behind a long 02:37 count. This workflow commits
-  # only data/social*, which the other workflows never touch, so concurrent pushes rebase cleanly.
+  # only data/social.js, which the other workflows never touch, so concurrent pushes rebase cleanly.
   group: collect-social
   cancel-in-progress: false
 
 jobs:
   collect-social:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Longer than the step budgets together (collect 60 + build 25) plus checkout, setup, cache restore
+    # and save, npm test and the push, so a slow run is never cancelled in the middle of the commit.
+    timeout-minutes: 120
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,8 +36,20 @@ jobs:
         with:
           node-version: '24'
 
+      # PRIVACY: the day files, the pool and the follower history name small accounts by DID, and the
+      # page only names accounts with 10K+ followers. They live in .state/ (git-ignored) and travel
+      # between runs in the Actions cache, which is not publicly downloadable, never in this public
+      # repo. Only data/social.js (guardrail-filtered and validated) is committed. GitHub evicts a cache
+      # not used for 7 days (a daily run keeps it warm); losing it only shortens the 7d / movers history.
+      - name: Restore the social state
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .state
+          key: social-state-${{ github.run_id }}
+          restore-keys: social-state-
+
       # A failed collection still keeps whatever earlier pieces of the day were written (each piece is
-      # saved when it finishes), so the job goes on to build and commit, then fails at the end.
+      # saved when it finishes), so the job goes on to build, save the state and commit, then fails at the end.
       - name: Replay Jetstream into the day file
         id: collect
         continue-on-error: true
@@ -50,17 +64,31 @@ jobs:
         timeout-minutes: 25
         run: node scripts/build-social.js
 
+      # Saved right after the build, before the tests and the push can fail, so the collected pieces
+      # survive a red run. A cache entry is immutable, hence a new key per run; the newest one is
+      # restored by prefix.
+      - name: Save the social state
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .state
+          key: social-state-${{ github.run_id }}
+
       # After the build, so the gate checks the code and the data about to be committed.
       - name: Run tests
+        id: tests
         run: npm test
 
+      # Commits only data/social.js (the raw state stays in the cache). The push is skipped when the
+      # tests fail or the run is cancelled: never publish data the gate rejects.
       - name: Commit and push if anything changed
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         env:
           BRANCH: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/social data/social.js
+          git add data/social.js
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
@@ -77,12 +105,12 @@ jobs:
           echo "::error::Could not push the social data update after 2 attempts."
           exit 1
 
-      # Runs after the commit so partial progress is saved, and turns the run red.
+      # Runs after the commit and the cache save so partial progress is kept, and turns the run red.
       - name: Fail if collection or build failed
         if: ${{ !cancelled() && (steps.collect.outcome == 'failure' || steps.build.outcome == 'failure') }}
         env:
           COLLECT: ${{ steps.collect.outcome }}
           BUILD: ${{ steps.build.outcome }}
         run: |
-          echo "::error::Social data run incomplete: collect=$COLLECT build=$BUILD. Partial data was committed; the next scheduled run fills what is missing."
+          echo "::error::Social data run incomplete: collect=$COLLECT build=$BUILD. Partial state was saved to the cache; the next scheduled run fills what is missing."
           exit 1

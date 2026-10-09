@@ -1,12 +1,16 @@
 #!/usr/bin/env node
-// Builds data/social.js (window.BLUESKY_SOCIAL) from the Jetstream day files in data/social/days/ plus
+// Builds data/social.js (window.BLUESKY_SOCIAL) from the Jetstream day files in <STATE_DIR>/days/ plus
 // Bluesky AppView profiles/posts, Constellation block counts and PLC directory documents.
 //
 //   node scripts/build-social.js
 //
-// Env: DATA_DIR (default ./data), NOW (ISO time, for tests). Also writes data/social/pool.json (the
-// account pool and its caches) and data/social/followers-history.json (daily follower snapshots).
-// Exits non-zero and writes nothing if an essential AppView call keeps failing or validation fails.
+// Env: DATA_DIR (default ./data, where social.js is written), STATE_DIR (default ./.state/social, git-
+// ignored), NOW (ISO time, for tests). Also writes <STATE_DIR>/pool.json (the account pool and its
+// caches) and <STATE_DIR>/followers-history.json (daily follower snapshots). The raw state names small
+// accounts by DID, so it never goes into git; only the guardrail-filtered data/social.js is published.
+// Exits non-zero and writes nothing if an essential AppView call keeps failing or validation fails. With
+// no day files at all (an empty or evicted state directory) it warns, leaves data/social.js as it is and
+// exits 0, so an empty board is never published over a good one.
 
 const fs = require('fs');
 const path = require('path');
@@ -132,6 +136,7 @@ function loadDays(daysDir, log) {
 async function main({ env = process.env, fetchImpl = globalThis.fetch, sleep = sleepReal, log = (...a) => console.log(...a), intervals } = {}) {
   const started = Date.now();
   const dataDir = env.DATA_DIR || path.join(__dirname, '..', 'data');
+  const stateDir = env.STATE_DIR || path.join(__dirname, '..', '.state', 'social');
   const nowMs = env.NOW ? Date.parse(env.NOW) : Date.now();
   if (!Number.isFinite(nowMs)) throw new Error(`bad NOW: ${env.NOW}`);
   const nowIso = new Date(nowMs).toISOString();
@@ -146,9 +151,12 @@ async function main({ env = process.env, fetchImpl = globalThis.fetch, sleep = s
   const warn = (m) => { warnings.push(m); log(`warning: ${m}`); };
 
   // ---- 1. day selection and sums
-  const files = loadDays(path.join(dataDir, 'social', 'days'), log);
+  const files = loadDays(path.join(stateDir, 'days'), log);
   const sel = social.selectDays([...files.values()].map((d) => ({ date: d.date, complete: d.complete })));
-  if (!sel) throw new Error('no day files in data/social/days');
+  if (!sel) {
+    warn(`no day files in ${path.join(stateDir, 'days')} (empty or evicted state); keeping the existing data/social.js`);
+    return { out: null, summary: { skipped: true, warnings: warnings.length } };
+  }
   const dayFile = files.get(sel.day);
   const weekFiles = sel.week.map((d) => files.get(d));
   const follows24 = new Map(dayFile.follows_top);
@@ -158,7 +166,7 @@ async function main({ env = process.env, fetchImpl = globalThis.fetch, sleep = s
   log(`day ${sel.day} (${sel.complete ? 'complete' : 'partial'}), 7d = ${sel.week.length} day file(s), first day ${sel.firstDay}`);
 
   // ---- 2. pool
-  const poolFile = path.join(dataDir, 'social', 'pool.json');
+  const poolFile = path.join(stateDir, 'pool.json');
   const prevPool = readJson(poolFile, { schema: 1, accounts: {} });
   const seen = new Map();
   const see = (did, date) => { if (!seen.has(did) || date > seen.get(did)) seen.set(did, date); };
@@ -231,13 +239,14 @@ async function main({ env = process.env, fetchImpl = globalThis.fetch, sleep = s
   boards.growing_7d = social.topEligible(social.rankEntries(follows7), eligible);
   const byFollowers = [...eligible].map((did) => [did, profiles.get(did).followersCount]).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
   boards.followed = social.topEligible(byFollowers, eligible);
-  const bound24 = social.followsWithBounds([dayFile.follows_top]).bound;
-  const bound7 = social.followsWithBounds(weekFiles.map((f) => f.follows_top)).bound;
+  const followsError = (f) => (f.errors && Number.isFinite(f.errors.follows) ? f.errors.follows : null);
+  const bound24 = social.followsWithBounds([dayFile.follows_top], undefined, [followsError(dayFile)]).bound;
+  const bound7 = social.followsWithBounds(weekFiles.map((f) => f.follows_top), undefined, weekFiles.map(followsError)).bound;
   boards.controversial_24h = social.controversialRows(blocks24, follows24, eligible, undefined, undefined, bound24);
   boards.controversial_7d = social.controversialRows(blocks7, follows7, eligible, undefined, undefined, bound7);
 
   // ---- 5. follower snapshots, gainers / losers
-  const historyFile = path.join(dataDir, 'social', 'followers-history.json');
+  const historyFile = path.join(stateDir, 'followers-history.json');
   const prevHistory = readJson(historyFile, { schema: 1, snapshots: [] });
   const current = new Map([...eligible].map((did) => [did, profiles.get(did).followersCount]));
   for (const win of ['24h', '7d']) {
