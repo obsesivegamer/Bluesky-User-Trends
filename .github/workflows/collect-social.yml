@@ -1,0 +1,88 @@
+name: Collect Bluesky Social Data
+
+on:
+  schedule:
+    # 03:00 UTC collects yesterday in full: Jetstream replays about 36 hours, so at 03:00 the start of
+    # yesterday is ~27 hours back, with ~9 hours of slack (the collector keeps a 2 hour safety margin of
+    # that). The 09:00 UTC run is a free retry: the collector only fills time the day file does not
+    # cover yet, so when 03:00 finished it does nothing and the builder just refreshes the boards.
+    - cron: '0 3,9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Its own group, not update-data: GitHub keeps one pending run per group, so sharing it would let the
+  # 03:17 data update replace a 03:00 collection queued behind a long 02:37 count. This workflow commits
+  # only data/social*, which the other workflows never touch, so concurrent pushes rebase cleanly.
+  group: collect-social
+  cancel-in-progress: false
+
+jobs:
+  collect-social:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      # A failed collection still keeps whatever earlier pieces of the day were written (each piece is
+      # saved when it finishes), so the job goes on to build and commit, then fails at the end.
+      - name: Replay Jetstream into the day file
+        id: collect
+        continue-on-error: true
+        timeout-minutes: 60
+        run: node scripts/collect-social.js
+
+      # Exits non-zero and writes nothing if an essential AppView call keeps failing or validation
+      # fails, so a failed build leaves the previous data/social.js in place.
+      - name: Build the leaderboards
+        id: build
+        continue-on-error: true
+        timeout-minutes: 25
+        run: node scripts/build-social.js
+
+      # After the build, so the gate checks the code and the data about to be committed.
+      - name: Run tests
+        run: npm test
+
+      - name: Commit and push if anything changed
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/social data/social.js
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: social data update (automated)"
+          for attempt in 1 2; do
+            if git pull --rebase --autostash origin "$BRANCH" && git push origin "HEAD:$BRANCH"; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            echo "Push attempt $attempt failed."
+            if [ "$attempt" -eq 1 ]; then sleep 15; fi
+          done
+          echo "::error::Could not push the social data update after 2 attempts."
+          exit 1
+
+      # Runs after the commit so partial progress is saved, and turns the run red.
+      - name: Fail if collection or build failed
+        if: ${{ !cancelled() && (steps.collect.outcome == 'failure' || steps.build.outcome == 'failure') }}
+        env:
+          COLLECT: ${{ steps.collect.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+        run: |
+          echo "::error::Social data run incomplete: collect=$COLLECT build=$BUILD. Partial data was committed; the next scheduled run fills what is missing."
+          exit 1

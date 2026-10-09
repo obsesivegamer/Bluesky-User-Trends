@@ -9,8 +9,12 @@ history goes back to November 2022 for users and March 2023 for activity. It cov
 [Jaz's stats page](https://bsky.jazco.dev/stats) plus the history and derived metrics that page doesn't
 keep.
 
-It's a static site: plain HTML, CSS and JavaScript, no build step, no tracking. A GitHub Action refreshes
-the data twice a day and commits it.
+It also has daily leaderboards for accounts with 10K+ followers (most blocked, fastest growing, most
+followed, gainers and losers, most controversial), the most-liked posts of the day and a decentralization
+meter.
+
+It's a static site: plain HTML, CSS and JavaScript, no build step, no tracking. GitHub Actions refresh
+the data and commit it: the main data twice a day, the social data twice a day (see below).
 
 ## What's on the page
 
@@ -33,6 +37,10 @@ the data twice a day and commits it.
   a prior-period comparison (the same number of calendar days just before the range, drawn as a dashed
   line). Keys: `1`–`8` ranges, `M` average, `L` log, `C` compare, `?` guide. The state is kept in the
   URL, e.g. `#r=1Y&ma=1&log=0&cmp=0`, so a view can be shared.
+- **Leaderboards `LDR`**: top 25 accounts for each board, with followers, posts, posts this month, last
+  post, account age and PDS host. **Top posts `PST`**: the most-liked posts of the latest complete UTC
+  day. **Decentralization `DEC`**: the share of active accounts on servers Bluesky does not run. See
+  "Leaderboards and social data" below.
 - **Data table** of the last 30 days in the range, a link to the full CSV, milestones, FAQ, definitions,
   sources and a guide dialog that explains every control.
 
@@ -91,6 +99,127 @@ the data twice a day and commits it.
   holds the count at the *end* of its day, a counter outage that starts at midnight shows up on the row
   dated the day before.
 
+## Leaderboards and social data
+
+These panels use a different pipeline from the charts above: the public Jetstream replay, the Bluesky
+AppView, Constellation and the PLC directory, collected by `.github/workflows/collect-social.yml`.
+
+### What each board means
+
+- **Most blocked** (`24H`, `7D`): blocks an account **received** in the window, counted from the
+  `app.bsky.graph.block` create events on Jetstream. `ALL` is the all-time count from Constellation, which
+  has only **recorded since early 2025** and was backfilled partly for older records, so it is a floor,
+  not the true total.
+- **Fastest growing** (`24H`, `7D`): follows received in the window (`app.bsky.graph.follow` creates).
+- **Most followed**: all-time follower count from the AppView (`followersCount`, exact at build time).
+- **Gainers and losers** (`24H`, `7D`): the **net** change in AppView `followersCount` between two of our
+  daily snapshots, so unfollows are included.
+- **Most controversial** (`24H`, `7D`): blocks received ÷ follows received in the window, for accounts with
+  at least 100 blocks in the window. Accounts that received no follows are skipped (the ratio is
+  undefined). Each day file lists only the top 3,000 accounts by follows; when an account is missing
+  from a day's list, its follows are bounded above by that day's cut value (the smallest count in the
+  list), so the ratio is a lower bound, rounded down and shown as "≥ ratio" with "≤ N follows".
+- **Top posts of the day**: posts created on the latest complete UTC day, ranked by exact `likeCount`
+  (AppView `getPosts`). Candidates come from sampled like and repost windows of the Jetstream (24 windows
+  of 150 s a day; the 1,000 most-liked posts of the samples are looked up), so a post that was never in a
+  sampled window can be missed. The data file holds up to 25 posts and the page shows the top 10. A post
+  with no text shows `[image]`, `[video]`, `[quote]` or `[link]` instead, according to its embed.
+
+**Gross vs net.** Jetstream delete events carry no subject, so an unfollow or unblock cannot be tied back
+to the account it affected. Blocks and follows received are therefore **gross**: they never go down. Only
+the gainers and losers boards are net.
+
+Every listed account shows avatar, display name, handle (linked to `bsky.app`), followers, total posts,
+posts this month (UTC calendar month), last post, account age (`createdAt`) and PDS host. Hosts are read
+from the account's DID document at plc.directory (`did:web` from its own DID document URL) and cached.
+**Posts this month** counts the account's own posts, replies included and reposts excluded (the same
+definition as the post total on its profile), read from its author feed (`posts_with_replies`, newest
+first) back to the start of the month. Reposts never use up the page cap: counting stops after 10 pages
+of 100 items that held own posts (30 pages in all) with the month boundary still ahead, and the count is
+then shown with a `+` as a lower bound. **Last post** is the newest own post found.
+
+### Guardrails
+
+Enforced in `scripts/build-social.js` and `lib/social.js`, and checked again in the page:
+
+- An account is named only if it has **at least 10,000 followers**, a resolving profile with a valid handle,
+  and **no label whose value starts with `!`** (that covers the `!no-unauthenticated` opt-out, `!hide`,
+  `!takedown` and `!warn`). Label values are normalized before they are compared (Unicode NFKC, so a
+  fullwidth `！hide` becomes `!hide`; control and zero-width characters dropped; trimmed; lowercase), so a
+  padded or recased label cannot slip past. Ineligible accounts still count toward the totals but are
+  never listed.
+- Top posts need an eligible author and no `!` label on the post, its record or the author. Posts or
+  authors with an adult or graphic label (`porn`, `sexual`, `nudity`, `graphic-media`, `gore`, compared
+  after the same normalization) are skipped. Post text is shortened to 280 characters.
+- Avatars are shown only from `https://cdn.bsky.app` (the page checks the URL, with no credentials or
+  port); anything else shows a blank placeholder.
+- The build refuses to write `data/social.js` if any listed account or post breaks these rules, and the
+  page applies the rules again when it renders.
+
+### Sources
+
+- [Jetstream](https://github.com/bluesky-social/jetstream), the public JSON firehose that Bluesky runs. The
+  collector replays history (about 36 hours are kept) from `jetstream1/2.us-east/us-west.bsky.network`
+  and buckets events by the time the network saw them (UTC). A dropped connection is retried on the same
+  instance; after three fruitless tries it fails over to the next one (rewinding the cursor 10 seconds
+  and dropping commits it already counted).
+- Bluesky AppView (`public.api.bsky.app`): profiles, post counts, like counts, labels, author feeds.
+- [Constellation](https://constellation.microcosm.blue) by [microcosm.blue](https://microcosm.blue): all-time
+  block counts per account, at most 400 requests per build (retries count). It has indexed since
+  2025-01-28, with older records only partly backfilled.
+- PLC directory ([plc.directory](https://plc.directory)): each account's PDS host and, when the AppView
+  lacks it, its creation date.
+
+### Schedule
+
+`collect-social.yml` runs at **03:00 and 09:00 UTC**. The 03:00 run collects yesterday in full, which
+Jetstream's roughly 36-hour replay allows with hours to spare; the 09:00 run is a free retry, because the
+collector only fills time the day file does not cover yet. After each collection the same job rebuilds
+`data/social.js`, runs the tests and commits `data/social/` and `data/social.js`. It has its own
+concurrency group (`collect-social`), so the other workflows can't delay or replace it; it commits only
+files they never touch. If collection or the build
+fails, whatever was collected is still committed and the run is marked failed.
+
+The collector never hangs a run. It retries a dropped connection on the same instance with backoff, then
+fails over to the next of the four instances (10 s cursor rewind, repeated commits dropped), and gives up
+after 12 failed connections in a row; the rest of that window is recorded as a gap in the day file, and
+the next run fills it while Jetstream still has the data. It always ends the process: exit 0 even after
+giving up, exit 1 only on a real error such as an unreadable file. While a day is incomplete, a
+`<date>.partial.json` file next to its day file keeps longer top lists (top 12,000 follows, 12,000 blocks
+and 6,000 posts, with error bounds) so a later run can merge into them without losing accounts that sit
+near the day file's cut of 3,000. It is committed because each Action run is a fresh checkout, and
+deleted as soon as the day is complete.
+
+### First run and warm-up
+
+- The 24-hour boards use the newest **complete** day (at least 99% of its seconds covered). Until the
+  first one exists the page uses the newest partial day and says so.
+- **Gainers and losers** need two snapshots: the 24-hour board needs one taken 20 to 36 hours earlier,
+  the 7-day board one taken 6 to 8 days earlier. Until then they stay empty.
+- The **7-day** blocks, growth and controversial boards sum the day files available, so they cover fewer
+  than 7 days for the first week (the file records how many in `coverage.days_7d`).
+- Day files older than the newest 35 are deleted, with their partial sidecars. Jetstream cannot replay
+  more than about 36 hours, so a day that was missed cannot be recovered later.
+
+### Decentralization meter
+
+The share of **active accounts that live on hosts Bluesky does not run**:
+
+`non-Bluesky active ÷ (active on Bluesky-operated hosts + active on non-Bluesky hosts)`
+
+It comes from our own `listRepos` count (`scripts/count-accounts.js`). A second pass in that script counts
+every other PDS host the relay lists as active or idle, beside the Bluesky pass and inside a 25-minute
+budget. **Bridgy Fed** (`atproto.brid.gy`) accounts are bridged from other networks, so they are split out
+from independent PDS hosts. Hostnames that list exactly the same set of accounts (compared by a hash of
+the DID set) are counted once. Each row of `data/accounts-daily.json` records the result as
+`third_party`; the page uses the newest complete row that has one. Hosts that did not answer in time are
+missing from the count, and a host with more than 1,000,000 active accounts is counted only up to that
+cap (`hosts_capped`), so when any host failed (`hosts_failed` above 0) or was capped the share is a
+**lower bound**. Failed third-party hosts never make the Bluesky row incomplete. Host names come from the
+network, so the pass only fetches plain public DNS names, resolves them through a lookup that refuses
+private and local addresses on every connection (a name that later points inside our network is
+refused), and follows no redirects. The Bluesky row is saved before the third-party result is attached.
+
 ## Data sources and credits
 
 - **Activity and user counts:** [Jaz's Bluesky index](https://bsky.jazco.dev/stats) by
@@ -110,7 +239,10 @@ the data twice a day and commits it.
 - **Gap fills:** [Krekeny/bluesky-stats](https://github.com/Krekeny/bluesky-stats) (MIT License,
   Copyright (c) 2025 Krekeny) and [elaval/bskyusers](https://github.com/elaval/bskyusers).
 - **PLC directory** ([plc.directory](https://plc.directory)) account-creation rates, used only to shape
-  the 2024 gaps between known counts.
+  the 2024 gaps between known counts, and account PDS hosts for the leaderboards.
+- **Leaderboards:** Bluesky's [Jetstream](https://github.com/bluesky-social/jetstream) and AppView, and
+  [Constellation](https://constellation.microcosm.blue) by [microcosm.blue](https://microcosm.blue) for
+  all-time block counts.
 - **Charts:** [Chart.js](https://www.chartjs.org/) 4.5.1, [chartjs-plugin-zoom](https://github.com/chartjs/chartjs-plugin-zoom)
   2.0.1 and [Hammer.js](https://hammerjs.github.io/) 2.0.8. Fonts: IBM Plex Sans and JetBrains Mono.
 
@@ -123,9 +255,13 @@ changed and the license notices.
 
 ```
 GitHub Action (03:17 and 15:17 UTC)
-  npm test → node updateData.js → commit data/, index.html, sitemap.xml → GitHub Pages
+  node updateData.js → npm test → commit data/, index.html, sitemap.xml → GitHub Pages
+GitHub Action (02:37 UTC)
+  node scripts/count-accounts.js → commit data/accounts-daily.json
+GitHub Action (03:00 and 09:00 UTC)
+  node scripts/collect-social.js → node scripts/build-social.js → npm test → commit data/social*
 Browser
-  index.html (numbers already filled in) → lib/format.js → data/bluesky-data.js → script.js
+  index.html (numbers already filled in) → lib/format.js → data/bluesky-data.js, data/social.js → script.js
 ```
 
 Jaz's API only allows its own site to read it from a browser, so the archive is built by the Action
@@ -133,7 +269,10 @@ and committed. The updater also writes the latest numbers, milestones, ticker an
 `index.html`, so search engines and readers without JavaScript see current values, and the page paints
 the same strings after it loads. Besides the files in this repo, the browser loads Chart.js, Hammer.js
 and the zoom plugin from jsDelivr, fonts from Google Fonts, and the newest hourly user count from
-public.api.bsky.app (if that fails the page stays in **ARCHIVE** mode). Each of those hosts sees the
+public.api.bsky.app (if that fails the page stays in **ARCHIVE** mode) and, for the leaderboards,
+profile pictures from cdn.bsky.app. `data/social.js` is optional: if
+it is missing or invalid, the leaderboard panels show their "collecting" state and the rest of the page
+works. Each of those hosts sees the
 visitor's IP address; there are no analytics or cookies.
 
 Details, the data file format and the pre-render contract: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -163,6 +302,24 @@ npm run update         # node updateData.js: fetch, rebuild data/, pre-render in
 npm run prerender      # re-render index.html and sitemap.xml from the committed data only (no network)
 ```
 
+### Collect the social data
+
+```bash
+node scripts/collect-social.js     # yesterday (UTC), minus what data/social/days/<date>.json already covers
+node scripts/build-social.js       # data/social.js, data/social/pool.json, data/social/followers-history.json
+node scripts/count-accounts.js     # own account count + third-party hosts → data/accounts-daily.json (~8 to 35 min)
+```
+
+`collect-social.js` takes `--date YYYY-MM-DD`, `--from`/`--to` (ISO times within that day), `--samples N`,
+`--sample-seconds S` and `--force` (ignore the existing day file). A full day takes at least about 12
+minutes to replay and can only reach back about 36 hours. `collect-social.js` also reads `JETSTREAM_HOSTS`
+(comma list of instances). `build-social.js` calls the live AppView, Constellation and PLC directory and
+takes several minutes; it fails, writing nothing, if any profile or post batch still fails after a retry.
+Both honour `DATA_DIR` (copy `data/` somewhere first for a trial run). `count-accounts.js` also reads
+`SKIP_THIRD_PARTY=1` (Bluesky hosts only) and `ONLY_THIRD_PARTY=1` (only the third-party pass, merged into
+the newest row), plus `THIRD_PARTY_BUDGET_MIN` (default 25). All three send a User-Agent that links back
+here.
+
 ### Rebuild the user history
 
 ```bash
@@ -186,7 +343,7 @@ python3 -m venv .venv && .venv/bin/pip install playwright && .venv/bin/python -m
 ```
 
 Subcommands: `doctor`, `smoke`, `ranges`, `compare`, `toggles`, `waves`, `exports`, `guide`,
-`keyboard`, `live`, `all`. `--url` points any of them at another copy of the site, `--headed` shows the
+`keyboard`, `live`, `social`, `all`. `--url` points any of them at another copy of the site, `--headed` shows the
 browser and `--json FILE` saves the results. The Bluesky feed is always intercepted, so `live` can force
 the LIVE, ARCHIVE, failure and timeout states. If Playwright's own Chromium build is missing, the harness
 uses the installed Google Chrome. Screenshots land in `artifacts/verify/`.
@@ -196,7 +353,9 @@ uses the installed Google Chrome. Screenshots land in `artifacts/verify/`.
 1. Fork the repo.
 2. **Settings → Pages**: deploy from the `main` branch, `/ (root)`.
 3. Open the **Actions** tab and enable workflows (a fork starts with them, and their schedules,
-   disabled). Then run **Update Bluesky Data** once; after that it runs on its schedule. The workflow
+   disabled). Then run **Update Bluesky Data** once; after that it runs on its schedule. Run **Count
+   Bluesky Accounts** (the decentralization meter needs it) and **Collect Bluesky Social Data** (the
+   leaderboards) once too; the leaderboards fill in over the first days (see "First run and warm-up"). The workflow
    asks for `contents: write` so it can commit; if your account or organisation limits the token to
    read-only, allow write access under **Settings → Actions → General → Workflow permissions**.
 4. Change the site and repository URLs: `SITE_URL`, `REPO_URL` and the `creator` in `lib/prerender.js`,
@@ -225,3 +384,22 @@ uses the installed Google Chrome. Screenshots land in `artifacts/verify/`.
 - Everything depends on Jaz's index and a few hobby archives. If they stop, the page keeps the archive
   but stops growing.
 - GitHub can delay scheduled Actions, so a refresh can land later than 03:17 or 15:17 UTC.
+- Blocks and follows received on the leaderboards are gross: Jetstream deletes carry no subject, so
+  unblocks and unfollows are not subtracted. Only gainers and losers are net.
+- All-time blocks come from Constellation, which has recorded since early 2025 and was backfilled only in
+  part, so they are a floor.
+- Each day file keeps the top 3,000 accounts per list. While a day is incomplete the partial sidecar keeps
+  12,000, so merging runs rarely loses anything, but an account within the sidecar's error bound of the cut
+  can still be undercounted (and more so if the sidecar is lost). The controversial ratio of an account that
+  is not in a day's follow list is only a lower bound (`follows_below_cut`).
+- Top posts are chosen from sampled like and repost windows, so a post that got its likes between samples
+  can be missed. Their like counts are exact.
+- Jetstream replays about 36 hours. A day that was not collected in that time stays missing, and the 24-hour
+  boards fall back to the newest partial day until a complete one exists.
+- Posts this month counts own posts (replies included, reposts excluded) and stops after 10 pages of 100
+  that held own posts, about 1,000 own posts, or 30 pages in all; the count is then a lower bound, shown
+  with a `+`. Accounts whose handle does not resolve, under 10K followers, or that carry a `!` label are
+  never named.
+- The decentralization meter counts only third-party hosts the relay lists and that answered in time, and
+  a host is counted only up to 1,000,000 active accounts, so it is a lower bound when any failed or was
+  capped, and it counts accounts that are active on their host, not people.

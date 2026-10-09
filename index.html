@@ -104,6 +104,14 @@
                   "@type": "Answer",
                   "text": "Jaz’s indexer had collection outages, for example Aug 31 – Sep 6, 2024 and Apr 13–14, 2026. Those days are shown as gaps and left out of averages, peaks and comparisons. User counts for days without a nearby observation are interpolated and marked as estimated: hatched bars, dashed lines and a ~ in the table."
                 }
+              },
+              {
+                "@type": "Question",
+                "name": "Where do the leaderboards and top posts come from?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Blocks and follows received in the last 24 hours and 7 days are counted from Bluesky’s public Jetstream firehose. Follower counts, post counts and profiles come from the Bluesky AppView (public.api.bsky.app); all-time blocks come from the Constellation link index (recorded since early 2025, so partial); the PDS host comes from each account’s DID document. Top posts are ranked by exact like counts from the AppView. Only accounts with at least 10,000 followers and no opt-out or moderation labels are named, and posts with adult or graphic-media labels are skipped. Everyone else still counts toward the totals. The share of accounts on non-Bluesky servers is our own listRepos count of every host."
+                }
               }
             ]
           },
@@ -539,6 +547,90 @@
                 </section>
             </div>
 
+            <section class="chart-section terminal-panel chart-wide social-panel" id="section-ldr" aria-labelledby="ldr-heading">
+                <div class="panel-bar">
+                    <div class="panel-title">
+                        <span class="fn-key" aria-hidden="true"><span class="fn-code">LDR</span><span class="fn-go">GO</span></span>
+                        <h2 id="ldr-heading">Leaderboards <span class="h-sub">accounts with 10K+ followers</span></h2>
+                    </div>
+                    <div class="panel-tools">
+                        <span class="scale-tag" id="ldr-asof" title="">NO DATA</span>
+                    </div>
+                </div>
+                <div class="social-controls">
+                    <div class="pill-segmented mode-pill" role="group" aria-label="Leaderboard">
+                        <button type="button" class="ldr-btn ldr-mode-btn active" data-board="blocked" aria-pressed="true">MOST BLOCKED</button>
+                        <button type="button" class="ldr-btn ldr-mode-btn" data-board="growing" aria-pressed="false">FASTEST GROWING</button>
+                        <button type="button" class="ldr-btn ldr-mode-btn" data-board="followed" aria-pressed="false">MOST FOLLOWED</button>
+                        <button type="button" class="ldr-btn ldr-mode-btn" data-board="movers" aria-pressed="false">GAINERS·LOSERS</button>
+                        <button type="button" class="ldr-btn ldr-mode-btn" data-board="controversial" aria-pressed="false">CONTROVERSIAL</button>
+                    </div>
+                    <div class="pill-segmented mode-pill" role="group" aria-label="Window" id="ldr-win-pill">
+                        <button type="button" class="ldr-btn ldr-win-btn active" data-win="24h" aria-pressed="true" title="Last 24 hours">24H</button>
+                        <button type="button" class="ldr-btn ldr-win-btn" data-win="7d" aria-pressed="false" title="Last 7 days">7D</button>
+                        <button type="button" class="ldr-btn ldr-win-btn" data-win="all" aria-pressed="false" title="All time (recorded since early 2025)">ALL</button>
+                    </div>
+                    <div class="pill-segmented mode-pill" role="group" aria-label="Direction" id="ldr-dir-pill" hidden>
+                        <button type="button" class="ldr-btn ldr-dir-btn active" data-dir="gain" aria-pressed="true" title="Biggest net follower gains">GAINERS</button>
+                        <button type="button" class="ldr-btn ldr-dir-btn" data-dir="loss" aria-pressed="false" title="Biggest net follower losses">LOSERS</button>
+                    </div>
+                </div>
+                <p class="visually-hidden" id="ldr-live" aria-live="polite"></p>
+                <p class="social-empty" id="ldr-empty">Collecting — first data after the next daily run.</p>
+                <div class="table-responsive social-table-wrap" id="ldr-table-wrap" tabindex="0" role="region" aria-label="Leaderboard table" hidden>
+                    <table class="data-table social-table">
+                        <thead>
+                            <tr>
+                                <th scope="col" class="col-rank">#</th>
+                                <th scope="col" class="col-acct">Account</th>
+                                <th scope="col" class="col-metric" id="ldr-metric-head">BLOCKS 24H</th>
+                                <th scope="col" class="col-opt">Followers</th>
+                                <th scope="col" class="col-opt">Posts</th>
+                                <th scope="col" class="col-opt" title="Own posts this calendar month (UTC), including replies, excluding reposts">Posts/mo</th>
+                                <th scope="col" class="col-opt">Last post</th>
+                                <th scope="col" class="col-opt col-xl">Age</th>
+                                <th scope="col" class="col-opt col-xl col-pds">PDS host</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ldr-body"></tbody>
+                    </table>
+                </div>
+                <ul class="social-notes" id="ldr-caveats"></ul>
+                <p class="chart-foot social-guard">Only accounts with at least 10,000 followers and no opt-out or moderation labels are named. Everyone else still counts toward the totals but is never listed. Bluesky-hosted vs third-party is read from each account’s PDS.</p>
+            </section>
+
+            <section class="chart-section terminal-panel chart-wide social-panel" id="section-pst" aria-labelledby="pst-heading">
+                <div class="panel-bar">
+                    <div class="panel-title">
+                        <span class="fn-key" aria-hidden="true"><span class="fn-code">PST</span><span class="fn-go">GO</span></span>
+                        <h2 id="pst-heading">Top posts of the day <span class="h-sub">most liked, UTC day</span></h2>
+                    </div>
+                    <div class="panel-tools">
+                        <span class="scale-tag" id="pst-asof">NO DATA</span>
+                    </div>
+                </div>
+                <p class="chart-subtitle" id="pst-subtitle">The 10 most-liked posts created on the latest complete UTC day, by accounts with 10K+ followers. Like counts are exact; candidates come from a sample of the like and repost stream, so a post can be missed.</p>
+                <ul class="social-notes" id="pst-caveats" hidden></ul>
+                <p class="social-empty" id="pst-empty">Collecting — first data after the next daily run.</p>
+                <ol class="post-list" id="pst-list" hidden></ol>
+                <p class="chart-foot social-guard">Authors must meet the same rules as the leaderboards. Posts with an opt-out, moderation, adult or graphic-media label are skipped. Text is shortened to 280 characters.</p>
+            </section>
+
+            <section class="chart-section terminal-panel chart-wide social-panel" id="section-dec" aria-labelledby="dec-heading">
+                <div class="panel-bar">
+                    <div class="panel-title">
+                        <span class="fn-key" aria-hidden="true"><span class="fn-code">DEC</span><span class="fn-go">GO</span></span>
+                        <h2 id="dec-heading">Decentralization <span class="h-sub">where accounts live</span></h2>
+                    </div>
+                    <div class="panel-tools">
+                        <span class="scale-tag" id="dec-asof">NO DATA</span>
+                    </div>
+                </div>
+                <p class="chart-subtitle">Share of active accounts hosted on servers Bluesky does not run, from our own daily count of every PDS host (<code>listRepos</code>). Bridgy Fed accounts are bridges to other networks, so they are shown apart. Hostnames that point at the same server are counted once.</p>
+                <p class="social-empty" id="dec-empty">Collecting — first data after the next daily run.</p>
+                <div class="dec-grid" id="dec-body" hidden></div>
+            </section>
+
             <section class="terminal-panel table-panel" id="section-table" aria-labelledby="table-heading">
                 <div class="panel-bar">
                     <div class="panel-title">
@@ -655,6 +747,10 @@
                         <summary class="faq-question"><span>Why are some days missing or marked as estimated?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
                         <div class="faq-answer"><p>Jaz’s indexer had collection outages, for example Aug 31 – Sep 6, 2024 and Apr 13–14, 2026. Those days are shown as gaps and left out of averages, peaks and comparisons. User counts for days without a nearby observation are interpolated and marked as estimated: hatched bars, dashed lines and a ~ in the table.</p></div>
                     </details>
+                    <details class="faq-item">
+                        <summary class="faq-question"><span>Where do the leaderboards and top posts come from?</span><span class="faq-arrow" aria-hidden="true">▼</span></summary>
+                        <div class="faq-answer"><p>Blocks and follows received in the last 24 hours and 7 days are counted from Bluesky’s public Jetstream firehose. Follower counts, post counts and profiles come from the Bluesky AppView (<code>public.api.bsky.app</code>); all-time blocks come from the Constellation link index (recorded since early 2025, so partial); the PDS host comes from each account’s DID document. Top posts are ranked by exact like counts from the AppView. Only accounts with at least 10,000 followers and no opt-out or moderation labels are named, and posts with adult or graphic-media labels are skipped. Everyone else still counts toward the totals. The share of accounts on non-Bluesky servers is our own <code>listRepos</code> count of every host.</p></div>
+                    </details>
                 </div>
             </div>
 
@@ -668,6 +764,8 @@
                         <li><strong>Daily active users (DAU, lower bound)</strong> are distinct accounts that created at least one like, post, follow or block that UTC day, as seen on the public firehose by Jaz’s indexer. It is a lower bound: readers, lurkers and repost-only accounts are not counted. Similarweb estimated about 3M mobile DAU in July 2026 (<a href="https://techcrunch.com/?p=3151942" target="_blank" rel="noopener">TechCrunch, 2026-08-11</a>). Bots and bridged accounts are not excluded. Counts are statistical estimates (about ±1%), recent days may still rise slightly, and today’s partial day is hidden.</li>
                         <li><strong>Daily posters</strong> are distinct accounts that published at least one post, including replies and quotes, that UTC day.</li>
                         <li><strong>Ratios:</strong> poster ratio = posters ÷ DAU; DAU share = DAU ÷ total users; posts per poster; likes per liker. <strong>Index totals</strong> are sums of Jaz’s daily counts since 2023-03-01, not network-wide all-time totals.</li>
+                        <li><strong>Leaderboards (LDR, PST):</strong> blocks and follows received are gross counts from the Jetstream firehose, so unblocks and unfollows are not subtracted. All-time blocks are recorded since early 2025 by Constellation and are partial. Gainers and losers are the net change in AppView follower counts between daily snapshots. Controversial = blocks ÷ follows received in the window, with at least 100 blocks. Posts this month counts an account’s own posts, replies included and reposts excluded (the same definition as the post total on its profile). It is a lower bound for very busy accounts, because counting stops after 10 feed pages that contain the account’s own posts (or 30 pages in all); the number is then shown with a + as a lower bound. A controversial ratio shown as ≥ means the account fell below the daily follow-list cutoff, so its follows are only known to be at most the number shown. Only accounts with at least 10,000 followers and no opt-out or moderation labels are named; adult and graphic-media posts are skipped.</li>
+                        <li><strong>Decentralization (DEC):</strong> accounts on non-Bluesky hosts ÷ (active accounts on Bluesky-operated hosts + active accounts on other hosts), from our own <code>listRepos</code> count. Hosts that did not answer are missing, so the share is a lower bound. Bridgy Fed (<code>atproto.brid.gy</code>) accounts are bridged from other networks.</li>
                         <li><strong>Trend badges</strong> compare 7-day averages at the start and end of the selected range (1W = week over week, 1M = month over month, 1Y = year over year). <strong>COMPARE</strong> overlays the same number of calendar days immediately before the range.</li>
                         <li><strong>Collection outages</strong> (shown as gaps, excluded from averages, peaks and comparisons): 2024-08-31 → 2024-09-07, 2024-09-10, 2024-10-23 (likes), 2025-04-22, 2025-05-20 (likes), 2026-04-13 → 15. Partial days are confirmed against Kuba Suder’s independent firehose counts. Block data is missing 2025-09-19 → 2025-12-19. Activity before 2023-05-01 is reconstructed and undercounted.</li>
                         <li><strong>Estimated user counts</strong> (interpolated; rows are dated by the day they end): most days 2024-07-02 → 2024-11-15 (sparse archives, shaped with PLC directory creation rates), 2025-03-14 → 24 and 2026-04-13 → 24 (Jaz’s counter offline), 2026-02-23 → 27 (stale counter), short gaps in the hourly feed (2025-12-31, and 1–6 days at a time in May–August 2026), and gaps in the Commons series in 2022–23 and 2024.</li>
@@ -681,6 +779,7 @@
                         <li>Hourly user counts: <a href="https://bsky.app/profile/hourlybskyusers.bsky.social" target="_blank" rel="noopener">@hourlybskyusers.bsky.social</a> by <a href="https://bsky.app/profile/jordan.weatherby.io" target="_blank" rel="noopener">@jordan.weatherby.io</a>. The live total in the TOTAL USERS card and the ticker is read from this account’s public feed.</li>
                         <li><a href="https://web.archive.org/web/*/bsky-search.jazco.io/stats" target="_blank" rel="noopener">Wayback Machine</a> captures of Jaz’s counter. Gap fills: <a href="https://github.com/Krekeny/bluesky-stats" target="_blank" rel="noopener">Krekeny/bluesky-stats</a> (MIT License, Copyright (c) 2025 Krekeny) and <a href="https://github.com/elaval/bskyusers" target="_blank" rel="noopener">elaval/bskyusers</a>.</li>
                         <li>PLC directory (<a href="https://plc.directory" target="_blank" rel="noopener">plc.directory</a>) account-creation rates, used only to shape the 2024 gaps between archived counts.</li>
+                        <li>Leaderboards and top posts: Bluesky’s <a href="https://github.com/bluesky-social/jetstream" target="_blank" rel="noopener">Jetstream</a> firehose (blocks, follows, likes, reposts), the <a href="https://docs.bsky.app/docs/category/http-reference" target="_blank" rel="noopener">Bluesky AppView</a> (profiles, follower counts, posts) and <a href="https://constellation.microcosm.blue" target="_blank" rel="noopener">Constellation</a> by microcosm (all-time block counts). Decentralization: our own <code>com.atproto.sync.listRepos</code> count of every PDS host listed by the Bluesky relay.</li>
                         <li>Charts by <a href="https://www.chartjs.org/" target="_blank" rel="noopener">Chart.js</a> with chartjs-plugin-zoom and Hammer.js. Event labels on the migration-wave chips are editorial.</li>
                     </ul>
                 </section>
@@ -697,7 +796,7 @@
                 <a href="data/bluesky-daily.csv">Dataset (CSV)</a>
             </div>
             <div class="footer-right">
-                <p>Independent project, not affiliated with Bluesky Social PBC. Data: <a href="https://bsky.jazco.dev/stats" target="_blank" rel="noopener">Jaz’s Bluesky index</a> and the archives credited above. Updated by GitHub Actions. No analytics or cookies; your browser loads Chart.js and Hammer.js from jsDelivr, fonts from Google Fonts and the live user count from public.api.bsky.app.</p>
+                <p>Independent project, not affiliated with Bluesky Social PBC. Data: <a href="https://bsky.jazco.dev/stats" target="_blank" rel="noopener">Jaz’s Bluesky index</a> and the archives credited above. Updated by GitHub Actions. No analytics or cookies; your browser loads Chart.js and Hammer.js from jsDelivr, fonts from Google Fonts and the live user count from public.api.bsky.app and profile pictures from cdn.bsky.app.</p>
             </div>
         </footer>
     </div>
@@ -782,6 +881,17 @@
                     </ul>
                 </section>
 
+                <section class="guide-section" aria-labelledby="g-social">
+                    <h3 id="g-social"><span class="guide-code" aria-hidden="true">LDR</span> Leaderboards, top posts &amp; decentralization</h3>
+                    <ul class="guide-feature-list">
+                        <li><strong>LDR &lt;GO&gt;</strong>: top 25 accounts for most blocked, fastest growing (follows received), most followed, net gainers and losers, and most controversial (blocks ÷ follows). Pick a board, then a window (24H, 7D; ALL only for blocks). Each row shows followers, posts, posts this month (own posts including replies, excluding reposts; shown with a + as a lower bound when counting stopped early), last post, account age and PDS host (Bluesky-hosted or third-party). On a phone only rank, account and the board metric are shown.</li>
+                        <li><strong>PST &lt;GO&gt;</strong>: the 10 most-liked posts created on the latest complete UTC day, with exact like, repost, quote and reply counts.</li>
+                        <li><strong>DEC &lt;GO&gt;</strong>: the share of active accounts hosted on servers Bluesky does not run, split into independent PDS hosts and Bridgy Fed bridges.</li>
+                        <li><strong>Sources</strong>: Jetstream (blocks, follows, likes), the Bluesky AppView (profiles, counts, posts), Constellation (all-time blocks, recorded since early 2025) and our own <code>listRepos</code> count. 24H and 7D block and follow counts are gross: unblocks and unfollows are not subtracted.</li>
+                        <li><strong>Guardrails</strong>: only accounts with at least 10,000 followers and no opt-out or moderation labels are named. Posts with adult or graphic labels are skipped. Everyone else still counts toward the totals.</li>
+                    </ul>
+                </section>
+
                 <section class="guide-section" aria-labelledby="g-data">
                     <h3 id="g-data"><span class="guide-code" aria-hidden="true">SRC</span> Data &amp; status</h3>
                     <ul class="guide-feature-list">
@@ -804,6 +914,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js" integrity="sha384-zPzbVRXfR492Sd5D+HydTYCxxgHAfgVO8KERbLlpeH5unsmbAEXrscGUUqLZG9BM" crossorigin="anonymous"></script>
     <script src="lib/format.js?v=1"></script>
     <script src="data/bluesky-data.js?v=202610091033"></script>
+    <script src="data/social.js"></script>
     <script src="script.js?v=1"></script>
 </body>
 </html>
