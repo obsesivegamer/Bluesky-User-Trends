@@ -28,9 +28,10 @@ windows), their `.partial.json` sidecars (12,000 follows, 12,000 blocks, 6,000 p
 `pool.json` (handles, follower counts, PDS host and all-time blocks of everyone who came near a board) and
 `followers-history.json` (daily follower snapshots) include accounts under the 10K cut and accounts with
 `!` labels, whom the page never names. Publishing them in a public repository would defeat that guardrail,
-so they live in the git-ignored `.state/social/` and, in the Action, in the GitHub Actions cache (not
-publicly downloadable; evicted after 7 days unused, which only shortens the 7-day and gainers and losers
-history). `social.js` is the only social file committed: already filtered and validated.
+so they live in the git-ignored `.state/social/` and, in the Action, in the GitHub Actions cache as an
+encrypted archive (a pull request from a fork can read a repository's caches, so the archive is encrypted
+with the `STATE_KEY` repository secret, which forks do not receive; evicted after 7 days unused, which only
+shortens the 7-day and gainers and losers history). `social.js` is the only social file committed: already filtered and validated.
 
 ## Sources
 

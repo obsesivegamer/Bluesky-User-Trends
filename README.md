@@ -162,8 +162,9 @@ Enforced in `scripts/build-social.js` and `lib/social.js`, and checked again in 
   follows and blocks per day, by DID), the 12,000-long sidecars, the account pool (handles of everyone
   who came near a board) and the follower history include accounts far below the 10K line, so they would
   defeat the guardrail in a public repo. They live in `.state/social/` (git-ignored; `STATE_DIR`
-  overrides it) and travel between runs in the GitHub Actions cache, which is not publicly downloadable.
-  Only `data/social.js`, already filtered to eligible accounts and validated, is committed.
+  overrides it) and travel between runs in the GitHub Actions cache, as a tar encrypted with the
+  `STATE_KEY` repository secret (`openssl enc -aes-256-cbc -pbkdf2`). The encryption matters: a pull
+  request from a fork can read the caches of the base repository, and forks do not receive secrets. Only `data/social.js`, already filtered to eligible accounts and validated, is committed.
 
 ### Sources
 
@@ -186,7 +187,9 @@ Jetstream's roughly 36-hour replay allows with hours to spare; the 09:00 run is 
 collector only fills time the day file does not cover yet. After each collection the same job rebuilds
 `data/social.js`, runs the tests and commits `data/social.js`, the only file it commits. The raw state
 (`.state/`) is restored from the Actions cache before collecting and saved to it right after the build,
-under a new key per run (`social-state-<run id>`, restored by prefix). GitHub evicts a cache that has not
+as `.state-cache/state.tar.enc`, encrypted with the `STATE_KEY` secret, under a new key per run
+(`social-state-enc-<run id>`, restored by prefix). The job fails up front when `STATE_KEY` is empty, and
+a state that cannot be decrypted (a rotated key) is dropped with a warning and the run starts empty. GitHub evicts a cache that has not
 been used for 7 days; the daily runs keep it warm, and losing it only shortens the 7-day and gainers and
 losers history (the builder starts again from the next day files; with no day files at all it warns, keeps
 the existing `data/social.js` and exits 0 rather than publish an empty board). The job has its own
@@ -375,14 +378,18 @@ uses the installed Google Chrome. Screenshots land in `artifacts/verify/`.
    leaderboards) once too; the leaderboards fill in over the first days (see "First run and warm-up"). The workflow
    asks for `contents: write` so it can commit; if your account or organisation limits the token to
    read-only, allow write access under **Settings → Actions → General → Workflow permissions**.
-4. Change the site and repository URLs: `SITE_URL`, `REPO_URL` and the `creator` in `lib/prerender.js`,
+4. **Settings → Secrets and variables → Actions → New repository secret**: add `STATE_KEY`, a random
+   string (for example `openssl rand -base64 48`). **Collect Bluesky Social Data** encrypts its cached state
+   with it and fails before collecting if it is missing. Keep the value; losing or changing it only costs
+   the stored history.
+5. Change the site and repository URLs: `SITE_URL`, `REPO_URL` and the `creator` in `lib/prerender.js`,
    `SITE_URL` in `script.js`, every `obsesivegamer` URL in `index.html` (canonical, Open Graph,
    Twitter, footer, the CSV "sources and terms" link), `robots.txt`, `sitemap.xml`, and `homepage` and
    `repository` in `package.json`. Change the contact URL in the User-Agent of `updateData.js`,
    `scripts/backfill-users.js` and `scripts/sample-plc-rates.js`. The tests and
    `scripts/verify-dashboard.py` read these values from the code, so they need no edits.
    `og-image.png` has the URL drawn into it; replace the image or leave it.
-5. Search engines don't read a `robots.txt` that sits under a project path such as
+6. Search engines don't read a `robots.txt` that sits under a project path such as
    `/Bluesky-User-Trends/robots.txt` (only `/robots.txt` at the host root counts), so its `Sitemap:`
    line is informational. Submit `sitemap.xml` in Google Search Console or Bing Webmaster Tools if you
    want it crawled from the sitemap.
@@ -412,7 +419,8 @@ uses the installed Google Chrome. Screenshots land in `artifacts/verify/`.
   (stored count or cut, plus the error), so the ratio is only a lower bound (`follows_below_cut`) whenever
   that ceiling is above what was stored. Day files from before the error was recorded are treated as
   unknown, which keeps their accounts off the controversial boards instead of guessing.
-- The raw social state lives in the GitHub Actions cache. GitHub evicts a cache unused for 7 days; losing it
+- The raw social state lives in the GitHub Actions cache, encrypted with the `STATE_KEY` secret (rotating
+  the key discards the history, once). GitHub evicts a cache unused for 7 days; losing it
   shortens the 7-day and gainers and losers history and nothing else, and an empty state never overwrites a
   published `data/social.js`.
 - Top posts are chosen from sampled like and repost windows, so a post that got its likes between samples

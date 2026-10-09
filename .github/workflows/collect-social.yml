@@ -31,6 +31,18 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
+      # The cache below is encrypted with this repository secret. A fork has no secrets, so it fails here,
+      # before anything is collected or saved.
+      - name: Require the STATE_KEY secret
+        id: key
+        env:
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+        run: |
+          if [ -z "$STATE_KEY" ]; then
+            echo "::error::The STATE_KEY repository secret is empty or missing (forks do not receive secrets). Add a random key under Settings > Secrets and variables > Actions, for example the output of: openssl rand -base64 48"
+            exit 1
+          fi
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -38,15 +50,37 @@ jobs:
 
       # PRIVACY: the day files, the pool and the follower history name small accounts by DID, and the
       # page only names accounts with 10K+ followers. They live in .state/ (git-ignored) and travel
-      # between runs in the Actions cache, which is not publicly downloadable, never in this public
-      # repo. Only data/social.js (guardrail-filtered and validated) is committed. GitHub evicts a cache
-      # not used for 7 days (a daily run keeps it warm); losing it only shortens the 7d / movers history.
-      - name: Restore the social state
+      # between runs in the Actions cache, never in this public repo. A cache is NOT private by itself:
+      # a pull request from a fork can restore the caches of the base repository and print them. So the
+      # cache holds only .state-cache/state.tar.enc, a tar of .state encrypted with the STATE_KEY secret
+      # (forks do not receive secrets). Only data/social.js (guardrail-filtered and validated) is
+      # committed. GitHub evicts a cache not used for 7 days (a daily run keeps it warm); losing it only
+      # shortens the 7d / movers history. The key prefix is new, so old plaintext caches are never restored.
+      - name: Restore the encrypted social state
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .state
-          key: social-state-${{ github.run_id }}
-          restore-keys: social-state-
+          path: .state-cache
+          key: social-state-enc-${{ github.run_id }}
+          restore-keys: social-state-enc-
+
+      # A state that cannot be decrypted (key rotated, corrupt entry) is not fatal: the run starts from an
+      # empty state, and the builder keeps the published data/social.js when there are no day files.
+      - name: Decrypt the social state
+        env:
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+        run: |
+          if [ ! -f .state-cache/state.tar.enc ]; then
+            echo "No cached state; starting empty."
+            exit 0
+          fi
+          tar_file="$RUNNER_TEMP/state.tar"
+          if openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in .state-cache/state.tar.enc -out "$tar_file" && tar -xf "$tar_file"; then
+            echo "Restored the social state."
+          else
+            echo "::warning::Could not decrypt or unpack the cached social state (wrong STATE_KEY or a corrupt entry); starting with an empty state."
+            rm -rf .state
+          fi
+          rm -f "$tar_file"
 
       # A failed collection still keeps whatever earlier pieces of the day were written (each piece is
       # saved when it finishes), so the job goes on to build, save the state and commit, then fails at the end.
@@ -64,22 +98,42 @@ jobs:
         timeout-minutes: 25
         run: node scripts/build-social.js
 
-      # Saved right after the build, before the tests and the push can fail, so the collected pieces
-      # survive a red run. A cache entry is immutable, hence a new key per run; the newest one is
-      # restored by prefix.
-      - name: Save the social state
-        if: ${{ !cancelled() }}
+      # Encrypted right after the build, before the tests and the push can fail, so the collected pieces
+      # survive a red run. Only the encrypted file is in the cache path: the plaintext tar is built in
+      # RUNNER_TEMP and removed, and .state itself is never under .state-cache.
+      - name: Encrypt the social state
+        if: ${{ !cancelled() && steps.key.outcome == 'success' }}
+        env:
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+        run: |
+          rm -rf .state-cache
+          mkdir .state-cache
+          if [ ! -d .state ]; then
+            echo "::warning::No .state to save."
+            exit 0
+          fi
+          tar_file="$RUNNER_TEMP/state.tar"
+          tar -cf "$tar_file" .state
+          if ! openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_KEY -in "$tar_file" -out .state-cache/state.tar.enc; then
+            rm -f "$tar_file" .state-cache/state.tar.enc
+            exit 1
+          fi
+          rm -f "$tar_file"
+
+      # A cache entry is immutable, hence a new key per run; the newest one is restored by prefix.
+      - name: Save the encrypted social state
+        if: ${{ !cancelled() && steps.key.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .state
-          key: social-state-${{ github.run_id }}
+          path: .state-cache
+          key: social-state-enc-${{ github.run_id }}
 
       # After the build, so the gate checks the code and the data about to be committed.
       - name: Run tests
         id: tests
         run: npm test
 
-      # Commits only data/social.js (the raw state stays in the cache). The push is skipped when the
+      # Commits only data/social.js (the raw state stays in the encrypted cache). The push is skipped when the
       # tests fail or the run is cancelled: never publish data the gate rejects.
       - name: Commit and push if anything changed
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}

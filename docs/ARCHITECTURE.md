@@ -62,8 +62,8 @@ top posts). Each commits its own files; the browser reads them like the main arc
                     npm test → git add data/social.js → commit → push
                     (the builder reads only the day files, never the .partial.json sidecars)
 
- .state/ is git-ignored and carried between runs by actions/cache (restore before collecting,
- save after the build). PRIVACY: the day files, pool and snapshots name accounts under 10K followers
+ .state/ is git-ignored and carried between runs by actions/cache as .state-cache/state.tar.enc, encrypted
+ with the STATE_KEY secret (decrypt after restoring, before collecting; encrypt, then save, after the build). PRIVACY: the day files, pool and snapshots name accounts under 10K followers
  by DID; the page names only eligible ones, so only the filtered data/social.js goes into the public repo.
 
  Browser ── data/social.js (optional, no cache-bust; missing or invalid → "Collecting") → script.js → LDR, PST
@@ -179,7 +179,7 @@ sampled twice, is refused, never double counted).
 | `totals.likes_sampled`, `reposts_sampled`, `sample_seconds` | What the sampled like/repost windows saw, and how many seconds they really covered |
 | `follows_top`, `blocks_top` | `[subject DID, count]`, up to 3,000 each, descending (ties by DID). Gross: delete events carry no subject. |
 | `post_candidates` | `[post URI, likes in sample, reposts in sample]`, up to 1,000, ranked by likes. Only a candidate list; the exact counts come from the AppView at build time. |
-| `sample_windows` | `[start, end]` of each like/repost window already counted (24 of 150 s a day, scaled to the length of the piece collected). A later run skips candidate windows that overlap one, and merging refuses overlaps. A window that did not run to its end contributes nothing and is not listed; one that ran to its end after a silence lists only the stretches that carry data (`sample_seconds` counts the same seconds), not the hole. Day files written before this field existed are treated as the fixed schedule their `sample_seconds` imply. |
+| `sample_windows` | `[start, end]` of each like/repost window already counted (24 of 150 s a day, scaled to the length of the piece collected). A later run skips candidate windows that overlap one, and merging refuses overlaps. A window that did not run to its end, or that had a silence (a gap) inside it, contributes nothing and is not listed, so its slot is sampled again: `collect-social.js` also takes the day's missing slots of the full 24-window schedule when follows and blocks are already fully covered (samples only, no follow/block replay). Day files written before this field existed are treated as the fixed schedule their `sample_seconds` imply. |
 | `errors` | `{follows, blocks, posts}`: the most a true count can exceed what the file's list shows, from the cuts of the long lists in the sidecar. Written on every fold and **kept after the sidecar is deleted**. The builder adds `errors.follows` to a listed account's follows and to the cut of an unlisted one to bound the controversial ratio. Absent in files written before this field: unknown (not 0), and a file whose errors are unknown is folded without claiming any, so it stays unknown. |
 
 Events are bucketed by Jetstream `time_us` (when the network saw them), UTC. The newest 35 files are kept.
@@ -205,7 +205,7 @@ collector also writes a sidecar with longer lists, and cuts the day file's lists
   it grows by the largest dropped count every time a list is cut. The day file only lists the top 3,000,
   so this matters only for accounts within `error` of that cut. The day file copies the error as `errors`
   (the error before the latest cut, which is what its own counts can be short by).
-- It is kept in the Actions cache (never in git: it names small accounts) because the 03:00 and 09:00
+- It is kept in the Actions cache, encrypted (never in git: it names small accounts) because the 03:00 and 09:00
   runs are separate checkouts, and deleted as soon as the day becomes complete (and pruned with its day
   file, or when no day file remains).
 - It is trusted only if it describes exactly the day file on disk (same date, `covered_seconds` and
@@ -259,7 +259,7 @@ blank placeholder.
 Privacy follows from the same rule: the page names only eligible accounts, so nothing that lists others may
 sit in the public repository. The day files (top 3,000 follows and blocks per day by DID), their 12,000-long
 sidecars, `pool.json` (handles of everyone near a board) and `followers-history.json` therefore live in the
-git-ignored `.state/` and in the Actions cache, never in a commit. Only `data/social.js`, which the builder
+git-ignored `.state/` and in the encrypted Actions cache, never in a commit. Only `data/social.js`, which the builder
 has already filtered and validated, is committed.
 
 ### Build details (`scripts/build-social.js`)
@@ -456,10 +456,18 @@ node lib/prerender.js --data other.js --index /tmp/index.html --sitemap /tmp/sit
 - `collect-social.yml` runs at 03:00 and 09:00 UTC: `scripts/collect-social.js` → `scripts/build-social.js`
   → `npm test` → commit `data/social.js` (job timeout 120 minutes, above the 60 + 25 minute step budgets
   plus setup, tests and push). The raw state (`.state/`: day files, sidecars, pool, snapshots) is restored
-  with `actions/cache/restore` (key `social-state-<run id>`, restore-keys `social-state-`) before collecting
-  and saved with `actions/cache/save` right after the build (`if: !cancelled()`), so a failed test or push
-  still keeps the collected pieces. It is a cache, not git, for privacy: the files name accounts below the
-  10K line by DID and the repository is public, while Actions caches are not publicly downloadable.
+  with `actions/cache/restore` (path `.state-cache`, key `social-state-enc-<run id>`, restore-keys
+  `social-state-enc-`) before collecting and saved with `actions/cache/save` right after the build
+  (`if: !cancelled()`), so a failed test or push still keeps the collected pieces. It is a cache, not git,
+  for privacy: the files name accounts below the 10K line by DID and the repository is public. A cache is
+  not private by itself, since a pull request from a fork can restore the base repository's caches and
+  print them, so the cache path holds only `.state-cache/state.tar.enc`: a tar of `.state` encrypted with
+  the `STATE_KEY` repository secret (`openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt`; forks do not
+  receive secrets). The plaintext tar is built in `RUNNER_TEMP` and removed, never in the cache path. The
+  first step fails the job when `STATE_KEY` is empty (a fork), so nothing is collected or saved. After the
+  restore a decrypt step untars the archive; if decryption fails (rotated key, corrupt entry) it warns
+  and the run starts with an empty state, which the builder tolerates by keeping the published
+  `data/social.js`. The save step is skipped when the key check failed.
   GitHub evicts a cache entry not used for 7 days; the daily runs keep it warm, and losing it only
   shortens the 7d and gainers and losers history (an empty state makes the builder warn, keep the existing
   `data/social.js` and exit 0). The first run on an empty cache starts from scratch. The 03:00 run collects
@@ -481,8 +489,8 @@ node lib/prerender.js --data other.js --index /tmp/index.html --sitemap /tmp/sit
   are dropped by key (`did|collection|rkey|rev`, remembered for 60 s of event time); a like/repost window
   restarts from its own start instead. Any connection that delivers an event resets the counters; 12
   fruitless connections in a row make the collector give up on that window. The rest of the window is then
-  recorded as a gap in the day file (a sample window that did not run to its end is dropped and can be
-  sampled again), and the process still ends with exit 0 (it exits explicitly, since a socket stuck
+  recorded as a gap in the day file (a sample window that did not run to its end, or that had a silence
+  inside it, is dropped and sampled again by a later run), and the process still ends with exit 0 (it exits explicitly, since a socket stuck
   closing would otherwise keep the Action alive; non-zero only on a real error such as an unreadable
   file). The run stays green and the next run fills the gap while the data is still in Jetstream's
   retention (at 09:00 the start of yesterday is 33 h back, inside the 34 h the collector allows).

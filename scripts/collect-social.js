@@ -152,6 +152,38 @@ async function replay({ collections, startMs, tally, label }, deps = {}) {
   }
 }
 
+// Replays each window in turn into `posts`. A window that did not run to its end, or had a silence
+// inside it, commits nothing (see SampleWindow.finish), so a later run samples its slot again.
+async function runSamples(windows, posts) {
+  for (const [s, e] of windows) {
+    const win = posts.window(s, e);
+    const label = `sample ${js.iso(s).slice(11, 19)}`;
+    const ok = await replay({ collections: [js.LIKE, js.REPOST], startMs: s, tally: win, label });
+    const r = win.finish(ok);
+    const why = !ok ? 'incomplete, dropped' : r.committed ? `${Math.round(r.coveredMs / 1000)}s covered` : `${r.gaps.length} silent gaps, dropped (sampled again by a later run)`;
+    log(`${label}: ${why}, ${posts.nLikes} likes / ${posts.nReposts} reposts so far`);
+  }
+}
+
+// The slots of the day's full schedule (24 windows over the UTC day) that lie inside what can be
+// replayed now, [fromMs, toMs], and that no committed window overlaps yet.
+function missingSampleSlots(existing, date, fromMs, toMs, sampleCount, sampleSeconds) {
+  const day = js.dayWindow(date);
+  const slots = js.sampleWindows(day.start, day.end, sampleCount, sampleSeconds).filter(([a, b]) => a >= fromMs && b <= toMs);
+  return js.freshSampleWindows(slots, existing ? js.daySampleWindows(existing) : []);
+}
+
+// Samples only: no follow/block replay. Returns a piece that claims no follow/block coverage (its whole
+// range is a gap), so folding it adds the sampled posts and leaves the follow/block lists alone.
+async function collectSamples(windows) {
+  const startMs = windows[0][0];
+  const endMs = windows[windows.length - 1][1];
+  log(`samples only ${js.iso(startMs)} .. ${js.iso(endMs)}, ${windows.length} missing sample windows`);
+  const posts = new js.PostSampleTally();
+  await runSamples(windows, posts);
+  return { startMs, endMs, gaps: [[startMs, endMs]], follows: new Map(), blocks: new Map(), nFollows: 0, nBlocks: 0, posts };
+}
+
 async function collectPiece(fromMs, toMs, sampleCount, sampleSeconds, sampledWindows = []) {
   const windows = js.freshSampleWindows(js.sampleWindows(fromMs, toMs, sampleCount, sampleSeconds), sampledWindows);
   log(`piece ${js.iso(fromMs)} .. ${js.iso(toMs)}, ${windows.length} sample windows (${sampleCount - windows.length} already sampled)`);
@@ -159,15 +191,7 @@ async function collectPiece(fromMs, toMs, sampleCount, sampleSeconds, sampledWin
   const posts = windows.length ? new js.PostSampleTally() : null;
 
   const followPass = replay({ collections: [js.FOLLOW, js.BLOCK], startMs: fromMs, tally, label: 'follow/block' });
-  const samplePass = (async () => {
-    for (const [s, e] of windows) {
-      const win = posts.window(s, e);
-      const label = `sample ${js.iso(s).slice(11, 19)}`;
-      const ok = await replay({ collections: [js.LIKE, js.REPOST], startMs: s, tally: win, label });
-      const r = win.finish(ok);
-      log(`${label}: ${ok ? `${Math.round(r.coveredMs / 1000)}s covered` : 'incomplete, dropped'}, ${posts.nLikes} likes / ${posts.nReposts} reposts so far`);
-    }
-  })();
+  const samplePass = runSamples(windows, posts);
   const [followsDone] = await Promise.all([followPass, samplePass]);
 
   const cov = tally.coverage.finish(!followsDone);
@@ -234,12 +258,14 @@ async function run(args) {
   const existing = args.force ? null : readJson(file);
   let partial = existing ? readJson(partialFile) : null;
   const pieces = js.missingPieces(existing, choice.fromMs, choice.toMs);
-  if (!pieces.length) {
+  const sampleSeconds = Number(args['sample-seconds'] || js.SAMPLE_SECONDS);
+  // An explicit --samples N is a manual run: it never adds slots on its own.
+  const slotsOf = (file) => (args.samples !== undefined ? [] : missingSampleSlots(file, date, choice.fromMs, choice.toMs, js.SAMPLE_WINDOWS, sampleSeconds));
+  if (!pieces.length && !slotsOf(existing).length) {
     log(`${date}: already covered${existing && existing.complete ? ' (complete)' : ''}, nothing to do`);
     return;
   }
 
-  const sampleSeconds = Number(args['sample-seconds'] || js.SAMPLE_SECONDS);
   let current = existing;
   const started = Date.now();
   for (const [from, to] of pieces) {
@@ -258,6 +284,20 @@ async function run(args) {
     log(`wrote ${path.relative(process.cwd(), file)}: covered ${current.window.covered_seconds}s, complete=${current.complete}${partial ? ', sidecar kept' : ''}`);
   }
 
+  // Sample slots still missing after the pieces: a window that ended in a silence is not committed, so
+  // its slot is sampled here, even when follows and blocks are fully covered (and without replaying
+  // them). Slots inside a piece collected just now were already tried this run and are left to the next.
+  const slots = current ? slotsOf(current).filter(([a, b]) => !pieces.some(([from, to]) => a < to && from < b)) : [];
+  if (slots.length) {
+    const folded = js.foldSamples(date, current, partial, await collectSamples(slots));
+    current = folded.file;
+    partial = folded.partial;
+    writeJson(file, current);
+    if (partial) writeJson(partialFile, partial);
+    else fs.rmSync(partialFile, { force: true });
+    log(`wrote ${path.relative(process.cwd(), file)}: ${current.totals.sample_seconds}s sampled${partial ? ', sidecar kept' : ''}`);
+  }
+
   log(`done in ${Math.round((Date.now() - started) / 1000)}s: ${JSON.stringify(current.totals)}`);
   if (!current.complete) log(`note: ${date} is not complete (${current.window.covered_seconds}s covered, ${current.window.gaps.length} gaps)`);
 }
@@ -271,7 +311,7 @@ async function main() {
   }
 }
 
-module.exports = { connect, replay, buildUrl, collectPiece, SAME_HOST_ATTEMPTS, MAX_FAILURES };
+module.exports = { connect, replay, buildUrl, collectPiece, collectSamples, missingSampleSlots, SAME_HOST_ATTEMPTS, MAX_FAILURES };
 
 // A socket stuck in CLOSING would keep the process (and the Action) alive, so exit explicitly.
 if (require.main === module) {

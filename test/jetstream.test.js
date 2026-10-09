@@ -235,6 +235,7 @@ test('PostSampleTally counts likes and reposts per post URI, only for posts', ()
   w.add(like(5, 'at://did:plc:g/app.bsky.feed.generator/feed'));
   w.add(like(6, 'at://did:plc:g/app.bsky.graph.list/l'));
   w.add(del(7, js.LIKE));
+  for (const sec of [30, 60, 90, 120]) w.add(like(sec, 'at://did:plc:g/app.bsky.graph.list/l'));
   assert.equal(w.add(like(150, post(9))), true);
   assert.equal(p.nLikes, 0, 'nothing reaches the tally before the window is finished');
   w.finish();
@@ -244,7 +245,7 @@ test('PostSampleTally counts likes and reposts per post URI, only for posts', ()
   assert.equal(p.nReposts, 1);
 });
 
-test('PostSampleTally records the sample seconds actually covered (a stalled window counts less)', () => {
+test('PostSampleTally records the sample seconds of finished windows; a window with a silence commits nothing', () => {
   const p = new js.PostSampleTally();
   const ok = p.window(at('00:00:00'), at('00:02:30'));
   for (let s = 0; s < 150; s += 5) ok.add(like(s, post(1)));
@@ -253,7 +254,9 @@ test('PostSampleTally records the sample seconds actually covered (a stalled win
   const bad = p.window(at('01:00:00'), at('01:02:30'));
   for (let s = 0; s < 60; s += 5) bad.add(like(s, post(2), js.LIKE, at('01:00:00')));
   bad.finish();
-  assert.equal(p.sampleMs, 150e3 + 55e3, 'only the first 55s of the stalled window were observed');
+  assert.equal(p.sampleMs, 150e3, 'the stalled window commits nothing, so its slot is sampled again');
+  assert.equal(p.likes.has(post(2)), false);
+  assert.deepEqual(p.windows, [[at('00:00:00'), at('00:02:30')]]);
 });
 
 test('topCounts: highest first, ties by key, zeros dropped, capped', () => {
@@ -580,6 +583,7 @@ test('review 7: pruning runs even when the run does nothing, and the process exi
   const yesterday = js.isoDate(Date.now() - js.DAY_MS);
   const w = js.dayWindow(yesterday);
   const full = dayFile({ from: js.iso(w.start), to: js.iso(w.end), date: yesterday });
+  full.sample_windows = js.sampleWindows(w.start, w.end, js.SAMPLE_WINDOWS, js.SAMPLE_SECONDS).map(([x, y]) => [js.iso(x), js.iso(y)]);
   fs.writeFileSync(path.join(days, `${yesterday}.json`), JSON.stringify(full));
   const old = [];
   for (let i = 0; i < 36; i++) old.push(js.isoDate(ms('2026-01-01T00:00:00Z') + i * js.DAY_MS));
@@ -732,6 +736,7 @@ test('review 4: the day file records the windows it sampled; unfinished windows 
   const done = p.window(base, base + 150e3);
   done.add(like(1, post(1), js.LIKE, base));
   done.add(like(2, post(1), js.LIKE, base));
+  for (const sec of [30, 60, 90, 120, 149]) done.add(like(sec, 'at://did:plc:g/app.bsky.graph.list/l', js.LIKE, base));
   assert.equal(done.finish(true).committed, true);
   const b2 = at('13:28:45');
   const cut = p.window(b2, b2 + 150e3);
@@ -739,10 +744,17 @@ test('review 4: the day file records the windows it sampled; unfinished windows 
   assert.equal(cut.finish(false).committed, false);
   assert.deepEqual([...p.likes], [[post(1), 2]]);
   assert.equal(p.nLikes, 2);
-  assert.equal(p.sampleMs, 2000, 'only what the finished window observed');
-  assert.deepEqual(p.windows, [[base, base + 2000]], 'and only that stretch is recorded as sampled');
+  const b3 = at('14:28:45');
+  const holey = p.window(b3, b3 + 150e3);
+  holey.add(like(1, post(3), js.LIKE, b3));
+  holey.add(like(149, post(3), js.LIKE, b3));
+  assert.equal(holey.finish(true).committed, false, 'a silence inside the window commits nothing');
+  assert.deepEqual([...p.likes], [[post(1), 2]]);
+  assert.equal(p.nLikes, 2);
+  assert.equal(p.sampleMs, 150e3, 'only what the finished window observed');
+  assert.deepEqual(p.windows, [[base, base + 150e3]], 'and only that window is recorded as sampled');
   const f = js.buildDayFile(D, { startMs: at('12:00:00'), endMs: at('13:00:00'), gaps: [], follows: new Map(), blocks: new Map(), nFollows: 0, nBlocks: 0, posts: p });
-  assert.deepEqual(f.sample_windows, [[`${D}T12:28:45Z`, `${D}T12:28:47Z`]]);
+  assert.deepEqual(f.sample_windows, [[`${D}T12:28:45Z`, `${D}T12:31:15Z`]]);
 });
 
 test('review 4: a refill of a follow gap skips windows that are already counted', () => {
@@ -816,6 +828,7 @@ test('review 5: only short DIDs and real post URIs become subjects', () => {
     `at://did:plc:a/app.bsky.feed.post/${'r'.repeat(513)}`, `at://did:plc:${'a'.repeat(200)}/app.bsky.feed.post/r`, 'at://did:plc:a/app.bsky.feed.post/r s',
   ];
   uris.forEach((u, i) => w.add(like(i + 1, u)));
+  for (const sec of [30, 60, 90, 120]) w.add(like(sec, 'at://did:plc:g/app.bsky.graph.list/l'));
   w.finish();
   assert.deepEqual([...p.likes.keys()], [post(1)]);
 });
