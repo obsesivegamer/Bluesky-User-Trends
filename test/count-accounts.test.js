@@ -20,7 +20,9 @@ function pager(pages) {
   return fn;
 }
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'count-accounts-'));
-const completeRow = (extra = {}) => ({ date: '2026-10-09', started_at: '2026-10-09T02:00:00Z', finished_at: '2026-10-09T02:10:00Z', complete: true, hosts: 1, hosts_failed: [], repos: 10, active: 9, deactivated: 1, takendown: 0, suspended: 0, deleted: 0, other: 0, host_list: ['h.us-east.host.bsky.network'], ...extra });
+// main() stamps a run with the current UTC date, so a "same-day" fixture row must carry today's date.
+const today = new Date().toISOString().slice(0, 10);
+const completeRow = (extra = {}) => ({ date: today, started_at: `${today}T02:00:00Z`, finished_at: `${today}T02:10:00Z`, complete: true, hosts: 1, hosts_failed: [], repos: 10, active: 9, deactivated: 1, takendown: 0, suspended: 0, deleted: 0, other: 0, host_list: ['h.us-east.host.bsky.network'], ...extra });
 const TP = { hosts: 3, hosts_ok: 2, hosts_failed: 1, repos: 380, active: 350, bridgy_active: 300 };
 
 test('per-host loop: a terminal cursor of "" ends a one-page host with one fetch (no double count)', async () => {
